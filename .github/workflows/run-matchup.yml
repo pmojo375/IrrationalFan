@@ -38,6 +38,21 @@ jobs:
           python-version: '3.11'
           cache: pip
       - run: pip install -r requirements.txt
+      - name: Build historical dataset
+        run: python process.py
+      - name: Verify historical dataset
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import pandas as pd
+          path = Path('cfb_team_games.parquet')
+          if not path.is_file():
+              raise SystemExit('Historical build did not create cfb_team_games.parquet')
+          seasons = pd.read_parquet(path, columns=['season'])['season'].dropna().unique()
+          print(f'Historical dataset: {len(seasons)} seasons ({min(seasons)}–{max(seasons)})')
+          if len(seasons) < 2:
+              raise SystemExit('Historical dataset has fewer than two seasons')
+          PY
       - name: Run discovery
         env:
           TEAM: ${{ inputs.team }}
@@ -46,7 +61,7 @@ jobs:
           TOP_N: ${{ inputs.top_n }}
         run: |
           set -o pipefail
-          python -m discovery.main --team "$TEAM" --opponent "$OPPONENT" --date "$GAME_DATE" --top-n "$TOP_N" --output matchup_report.txt 2>&1 | tee run_log.txt
+          python -m discovery.main --team "$TEAM" --opponent "$OPPONENT" --date "$GAME_DATE" --top-n "$TOP_N" --data cfb_team_games.parquet --output matchup_report.txt 2>&1 | tee run_log.txt
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
