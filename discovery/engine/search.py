@@ -432,6 +432,8 @@ def _evidence_diverse_top(
     used_signatures: set[tuple[str, frozenset[str]]] = set()
     objective_counts: dict[str, int] = {}
     scope_counts: dict[str, int] = {}
+    # Soft target: roughly 60% record narratives, without manufacturing weak ones.
+    max_streaks = max(1, (top_n * 2) // 5)
 
     while len(selected) < min(top_n, len(ordered)):
         best_index = None
@@ -454,6 +456,14 @@ def _evidence_diverse_top(
                 continue
             # Favor different evidence without sacrificing the funniest finds.
             score = d.ranking_score - 22.0 * overlap
+            # Four-part clauses are usually too convoluted to be memorable.
+            score -= 5.0 * max(0, len(d.conditions) - 2) ** 2
+            # Softly rebalance streak-heavy results toward standalone records.
+            if d.objective == "streak":
+                streaks = objective_counts.get("streak", 0)
+                score -= 8.0 + 6.0 * streaks
+                if streaks >= max_streaks:
+                    score -= 25.0
             score -= 6.0 * objective_counts.get(d.objective, 0)
             score -= 3.0 * scope_counts.get(d.scope, 0)
             # Reward conditions crossing independent dimensions.
@@ -470,6 +480,8 @@ def _evidence_diverse_top(
         if best_index is None:
             break
         d = ordered[best_index]
+        # The score shown in the report must match the selection order.
+        d.ranking_score = best_score
         selected.append(best_index)
         used_signatures.add((d.scope, narrative_signature(d)))
         objective_counts[d.objective] = objective_counts.get(d.objective, 0) + 1
