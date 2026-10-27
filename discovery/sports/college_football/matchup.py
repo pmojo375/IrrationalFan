@@ -133,6 +133,11 @@ def _team_state_after_latest(
         win_streak = 0
         loss_streak = int(last["loss_streak"]) + 1
 
+    # Records and entering streaks are season-specific. The latest completed
+    # game can be from the previous season for an early-season matchup.
+    if as_of is not None and "season" in last.index and int(last["season"]) < as_of.year:
+        wins = losses = games_played = win_streak = loss_streak = 0
+
     win_pct = wins / games_played if games_played else float("nan")
     state: dict[str, Any] = {
         "wins": wins,
