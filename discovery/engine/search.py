@@ -409,6 +409,7 @@ def _evidence_diverse_top(
     top_n: int,
     pool_size: int = 200,
     max_overlap: float = 0.75,
+    min_selection_score: float = 20.0,
 ) -> list[Discovery]:
     """Rerank a small shortlist by quality, distinct stories and actual game overlap.
 
@@ -432,7 +433,7 @@ def _evidence_diverse_top(
     used_signatures: set[tuple[str, frozenset[str]]] = set()
     objective_counts: dict[str, int] = {}
     scope_counts: dict[str, int] = {}
-    # Soft target: roughly 60% record narratives, without manufacturing weak ones.
+    # Limit streaks, rather than letting cumulative penalties become absurd.
     max_streaks = max(1, (top_n * 2) // 5)
 
     while len(selected) < min(top_n, len(ordered)):
@@ -443,6 +444,19 @@ def _evidence_diverse_top(
                 continue
             signature = (d.scope, narrative_signature(d))
             if signature in used_signatures:
+                continue
+            if d.objective == "streak" and objective_counts.get("streak", 0) >= max_streaks:
+                continue
+            # Adding a condition to the same evidence is not a new story.
+            candidate_keys = {condition.key() for condition in d.conditions}
+            if any(
+                ordered[j].scope == d.scope
+                and (
+                    candidate_keys.issuperset({condition.key() for condition in ordered[j].conditions})
+                    or {condition.key() for condition in ordered[j].conditions}.issuperset(candidate_keys)
+                )
+                for j in selected
+            ):
                 continue
             overlaps = []
             for j in selected:
@@ -458,14 +472,9 @@ def _evidence_diverse_top(
             score = d.ranking_score - 22.0 * overlap
             # Four-part clauses are usually too convoluted to be memorable.
             score -= 5.0 * max(0, len(d.conditions) - 2) ** 2
-            # Softly rebalance streak-heavy results toward standalone records.
-            if d.objective == "streak":
-                streaks = objective_counts.get("streak", 0)
-                score -= 8.0 + 6.0 * streaks
-                if streaks >= max_streaks:
-                    score -= 25.0
-            score -= 6.0 * objective_counts.get(d.objective, 0)
-            score -= 3.0 * scope_counts.get(d.scope, 0)
+            # Modest diversity penalties that do not explode with list length.
+            score -= min(8.0, 2.0 * objective_counts.get(d.objective, 0))
+            score -= min(6.0, 2.0 * scope_counts.get(d.scope, 0))
             # Reward conditions crossing independent dimensions.
             features = narrative_signature(d)
             dimensions = sum(bool(features & group) for group in (
@@ -477,7 +486,7 @@ def _evidence_diverse_top(
             score += 2.0 * max(0, dimensions - 1)
             if score > best_score:
                 best_score, best_index = score, i
-        if best_index is None:
+        if best_index is None or best_score < min_selection_score:
             break
         d = ordered[best_index]
         # The score shown in the report must match the selection order.
