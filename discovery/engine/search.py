@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from discovery.engine.conditions import (
+    apply_conditions,
     can_combine,
     conditions_apply_to_current,
     generate_atomic_conditions,
@@ -397,61 +398,82 @@ class DiscoveryEngine:
             total.discoveries_before_dedup += stats.discoveries_before_dedup
 
         deduped = deduplicate_discoveries(all_disc)
-        deduped = _diverse_top(deduped, top_n=top_n)
+        deduped = _evidence_diverse_top(deduped, scopes, top_n=top_n)
         total.discoveries_after_dedup = len(deduped)
         total.elapsed_seconds = time.perf_counter() - t0
         return deduped, total
 
 
-def _diverse_top(discoveries: list[Discovery], top_n: int) -> list[Discovery]:
-    """Greedy diversity selection: avoid near-identical stories in the final report.
+def _evidence_diverse_top(
+    discoveries: list[Discovery],
+    scopes: Sequence[tuple[str, pd.DataFrame, Mapping[str, Any], str, str]],
+    top_n: int,
+    pool_size: int = 200,
+    max_overlap: float = 0.75,
+) -> list[Discovery]:
+    """Rerank a small shortlist by quality, distinct stories and actual game overlap.
 
-    A scope/objective can contribute several results, but only one version of a
-    feature combination. Do not pad the output with repetitions to reach top_n.
+    Only materialize game-id sets for the top candidates. Keep evidence separated
+    by scope: opponent losses and team wins refer to different narratives.
     """
-    if top_n <= 0:
+    if top_n <= 0 or not discoveries:
         return []
-    ordered = sorted(discoveries, key=lambda d: d.ranking_score, reverse=True)
-    selected: list[Discovery] = []
-    signatures: set[tuple[str, frozenset[str]]] = set()
-    family_counts: dict[tuple[str, str], int] = {}
-
-    def family(d: Discovery) -> tuple[str, str]:
-        # Record and streak versions of the same situation are one family.
-        features = narrative_signature(d)
-        if "month" in features:
-            category = "calendar"
-        elif "is_home" in features or "neutral_site" in features:
-            category = "location"
-        elif "opp_wins" in features or "opp_win_streak" in features:
-            category = "opponent_form"
-        elif "wins" in features or "win_streak" in features:
-            category = "team_form"
-        else:
-            category = "other"
-        return d.scope, category
-
-    def add(d: Discovery) -> None:
-        selected.append(d)
-        signatures.add((d.scope, narrative_signature(d)))
-        key = family(d)
-        family_counts[key] = family_counts.get(key, 0) + 1
-    # Reserve one opportunity per scope, then select the strongest distinct stories.
-    for scope in dict.fromkeys(d.scope for d in ordered):
-        for d in ordered:
-            signature = (d.scope, narrative_signature(d))
-            if d.scope == scope and signature not in signatures:
-                add(d)
-                break
-        if len(selected) >= top_n:
-            return selected
+    frames = {name: frame for name, frame, *_ in scopes}
+    ordered = sorted(discoveries, key=lambda d: d.ranking_score, reverse=True)[:pool_size]
+    evidence: list[frozenset] = []
     for d in ordered:
-        signature = (d.scope, narrative_signature(d))
-        if signature in signatures:
+        frame = frames.get(d.scope)
+        if frame is None or "game_id" not in frame.columns:
+            evidence.append(frozenset())
             continue
-        if family_counts.get(family(d), 0) >= 3:
-            continue
-        add(d)
-        if len(selected) >= top_n:
+        mask = apply_conditions(frame, d.conditions)
+        evidence.append(frozenset(frame.loc[mask, "game_id"].dropna().tolist()))
+
+    selected: list[int] = []
+    used_signatures: set[tuple[str, frozenset[str]]] = set()
+    objective_counts: dict[str, int] = {}
+    scope_counts: dict[str, int] = {}
+
+    while len(selected) < min(top_n, len(ordered)):
+        best_index = None
+        best_score = float("-inf")
+        for i, d in enumerate(ordered):
+            if i in selected:
+                continue
+            signature = (d.scope, narrative_signature(d))
+            if signature in used_signatures:
+                continue
+            overlaps = []
+            for j in selected:
+                if ordered[j].scope != d.scope:
+                    continue
+                union = evidence[i] | evidence[j]
+                if union:
+                    overlaps.append(len(evidence[i] & evidence[j]) / len(union))
+            overlap = max(overlaps, default=0.0)
+            if overlap >= max_overlap:
+                continue
+            # Favor different evidence without sacrificing the funniest finds.
+            score = d.ranking_score - 22.0 * overlap
+            score -= 6.0 * objective_counts.get(d.objective, 0)
+            score -= 3.0 * scope_counts.get(d.scope, 0)
+            # Reward conditions crossing independent dimensions.
+            features = narrative_signature(d)
+            dimensions = sum(bool(features & group) for group in (
+                {"month", "day_of_week", "week"},
+                {"wins", "losses", "win_streak"},
+                {"opp_wins", "opp_losses", "opp_win_streak"},
+                {"is_home", "neutral_site", "venue"},
+            ))
+            score += 2.0 * max(0, dimensions - 1)
+            if score > best_score:
+                best_score, best_index = score, i
+        if best_index is None:
             break
-    return sorted(selected, key=lambda d: d.ranking_score, reverse=True)
+        d = ordered[best_index]
+        selected.append(best_index)
+        used_signatures.add((d.scope, narrative_signature(d)))
+        objective_counts[d.objective] = objective_counts.get(d.objective, 0) + 1
+        scope_counts[d.scope] = scope_counts.get(d.scope, 0) + 1
+
+    return [ordered[i] for i in selected]
