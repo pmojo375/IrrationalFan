@@ -57,35 +57,56 @@ def clear_data_cache() -> None:
     _DATA_CACHE.clear()
 
 
-def resolve_team_name(df: pd.DataFrame, query: str) -> str:
-    """Resolve a user-facing team string to the canonical dataset name."""
-    names = sorted(df["team"].dropna().unique().tolist())
+def resolve_team_id(df: pd.DataFrame, query: str) -> int:
+    """Resolve a user-facing team string to a stable team_id."""
     q = query.strip().lower()
-    exact = [n for n in names if n.lower() == q]
-    if exact:
-        return exact[0]
-    starts = [n for n in names if n.lower().startswith(q)]
-    if len(starts) == 1:
-        return starts[0]
-    contains = [n for n in names if q in n.lower()]
-    if len(contains) == 1:
-        return contains[0]
-    # Prefer FBS-looking shortest contains match when several share a prefix
-    if starts:
-        return sorted(starts, key=len)[0]
-    if contains:
-        return sorted(contains, key=len)[0]
-    raise ValueError(f"Could not resolve team name {query!r}. Examples: {names[:5]}")
+    teams = df[["team_id", "team"]].dropna().drop_duplicates()
+    names = teams["team"].astype(str)
+
+    exact = teams.loc[names.str.lower() == q]
+    pool = exact
+    if pool.empty:
+        starts = teams.loc[names.str.lower().str.startswith(q)]
+        pool = starts
+    if pool.empty:
+        contains = teams.loc[names.str.lower().str.contains(q, regex=False)]
+        pool = contains
+    if pool.empty:
+        raise ValueError(f"Could not resolve team name {query!r}.")
+
+    # Prefer the team_id with the most games, then the most recent display name.
+    counts = df.groupby("team_id").size()
+    ranked = (
+        pool.assign(n=pool["team_id"].map(counts))
+        .sort_values(["n", "team"], ascending=[False, True])
+    )
+    return int(ranked.iloc[0]["team_id"])
 
 
-def _team_state_after_latest(df: pd.DataFrame, team: str) -> dict[str, Any]:
-    """Current pregame features for a team as of after its most recent completed game."""
-    sub = df[df["team"] == team].copy()
+def resolve_team_name(df: pd.DataFrame, query: str) -> str:
+    """Resolve a user-facing team string to the latest display name for that team_id."""
+    team_id = resolve_team_id(df, query)
+    return display_name_for_team_id(df, team_id)
+
+
+def display_name_for_team_id(df: pd.DataFrame, team_id: int) -> str:
+    sub = df.loc[df["team_id"] == team_id, ["team", "game_date"]].copy()
     if sub.empty:
-        raise ValueError(f"No historical rows for team {team!r}")
+        raise ValueError(f"No rows for team_id={team_id}")
+    sub["_dt"] = pd.to_datetime(sub["game_date"], utc=True, errors="coerce")
+    sub = sub.sort_values("_dt", kind="mergesort")
+    return str(sub.iloc[-1]["team"])
+
+
+def _team_state_after_latest(df: pd.DataFrame, team_id: int) -> dict[str, Any]:
+    """Current pregame features for a team as of after its most recent completed game."""
+    sub = df[df["team_id"] == team_id].copy()
+    if sub.empty:
+        raise ValueError(f"No historical rows for team_id={team_id}")
     sub["_dt"] = pd.to_datetime(sub["game_date"], utc=True, errors="coerce")
     sub = sub.sort_values(["_dt", "game_id"], kind="mergesort")
     last = sub.iloc[-1]
+    team = str(last["team"])
 
     # After the last completed game, the next entering record is last.wins/losses + result
     wins = int(last["wins"]) + (1 if bool(last["won"]) else 0)
@@ -118,6 +139,8 @@ def build_matchup_features(
     *,
     team: str,
     opponent: str,
+    team_id: int,
+    opponent_id: int,
     game_date: str,
     home: bool,
     overrides: Optional[Mapping[str, Any]] = None,
@@ -136,19 +159,19 @@ def build_matchup_features(
 
     # Try to find an existing scheduled/played row for this matchup
     existing = df[
-        (df["team"] == team)
-        & (df["opponent"] == opponent)
+        (df["team_id"] == team_id)
+        & (df["opponent_id"] == opponent_id)
         & (pd.to_datetime(df["game_date"], utc=True, errors="coerce").dt.strftime("%Y-%m-%d")
            == (dt.strftime("%Y-%m-%d") if not pd.isna(dt) else ""))
     ]
     if not existing.empty:
         row = existing.iloc[0].to_dict()
         team_feats = _row_to_features(row)
-        opp_row = df[(df["game_id"] == row["game_id"]) & (df["team"] == opponent)]
+        opp_row = df[(df["game_id"] == row["game_id"]) & (df["team_id"] == opponent_id)]
         opponent_feats = _row_to_features(opp_row.iloc[0].to_dict()) if not opp_row.empty else {}
     else:
-        team_state = _team_state_after_latest(df, team)
-        opp_state = _team_state_after_latest(df, opponent)
+        team_state = _team_state_after_latest(df, team_id)
+        opp_state = _team_state_after_latest(df, opponent_id)
 
         team_feats = {
             **team_state,
@@ -228,8 +251,8 @@ def _row_to_features(row: Mapping[str, Any]) -> dict[str, Any]:
 def _prepare_scope_frames(
     df: pd.DataFrame,
     *,
-    team: str,
-    opponent: str,
+    team_id: int,
+    opponent_id: int,
     game_date: str,
     scopes: Sequence[str],
 ) -> dict[str, pd.DataFrame]:
@@ -242,8 +265,8 @@ def _prepare_scope_frames(
             "%Y-%m-%d"
         )
         upcoming_mask = same_day & (
-            ((hist["team"] == team) & (hist["opponent"] == opponent))
-            | ((hist["team"] == opponent) & (hist["opponent"] == team))
+            ((hist["team_id"] == team_id) & (hist["opponent_id"] == opponent_id))
+            | ((hist["team_id"] == opponent_id) & (hist["opponent_id"] == team_id))
         )
         hist = hist.loc[~upcoming_mask].copy()
 
@@ -254,18 +277,18 @@ def _prepare_scope_frames(
         frames["all"] = all_df
 
     if "team" in scopes or "both" in scopes:
-        team_df = hist[hist["team"] == team].copy()
+        team_df = hist[hist["team_id"] == team_id].copy()
         team_df["favorable"] = team_df["won"].astype(bool)
         frames["team"] = team_df
 
     if "opponent" in scopes or "both" in scopes:
-        opp_df = hist[hist["team"] == opponent].copy()
+        opp_df = hist[hist["team_id"] == opponent_id].copy()
         # Favorable for our narrative = opponent lost
         opp_df["favorable"] = ~opp_df["won"].astype(bool)
         frames["opponent"] = opp_df
 
     if "h2h" in scopes:
-        h2h = hist[(hist["team"] == team) & (hist["opponent"] == opponent)].copy()
+        h2h = hist[(hist["team_id"] == team_id) & (hist["opponent_id"] == opponent_id)].copy()
         h2h["favorable"] = h2h["won"].astype(bool)
         frames["h2h"] = h2h
 
@@ -308,8 +331,10 @@ def discover(
     path = Path(data_path) if data_path else cfg.data_path
     df = load_observations(path)
 
-    team_name = resolve_team_name(df, team)
-    opp_name = resolve_team_name(df, opponent)
+    team_id = resolve_team_id(df, team)
+    opponent_id = resolve_team_id(df, opponent)
+    team_name = display_name_for_team_id(df, team_id)
+    opp_name = display_name_for_team_id(df, opponent_id)
 
     search_cfg = replace(cfg.search)
     if scopes is not None:
@@ -328,6 +353,8 @@ def discover(
         df,
         team=team_name,
         opponent=opp_name,
+        team_id=team_id,
+        opponent_id=opponent_id,
         game_date=game_date,
         home=home,
         overrides=feature_overrides,
@@ -338,8 +365,8 @@ def discover(
 
     frames = _prepare_scope_frames(
         df,
-        team=team_name,
-        opponent=opp_name,
+        team_id=team_id,
+        opponent_id=opponent_id,
         game_date=game_date,
         scopes=search_cfg.scopes,
     )

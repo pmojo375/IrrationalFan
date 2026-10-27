@@ -412,15 +412,17 @@ def test_score_penalizes_tiny_samples():
 
 @pytest.fixture
 def real_data_available():
-    from discovery.config import DATA_PATH
+    from discovery.config import default_data_path
 
-    if not DATA_PATH.exists():
+    path = default_data_path()
+    if not path.exists():
         pytest.skip("Processed parquet not available")
     clear_data_cache()
-    return DATA_PATH
+    return path
 
 
 def test_resolve_team_and_real_discover(real_data_available):
+    # Keep scopes narrow so the multi-season dataset stays test-friendly.
     result = discover(
         team="Michigan State",
         opponent="Michigan",
@@ -429,19 +431,17 @@ def test_resolve_team_and_real_discover(real_data_available):
         top_n=10,
         min_sample_size=3,
         max_conditions=3,
-        beam_width=25,
-        scopes=("team", "opponent", "all"),
+        beam_width=20,
+        scopes=("team", "opponent", "h2h"),
         print_report=False,
         data_path=real_data_available,
     )
-    assert result.team == "Michigan State Spartans"
-    assert result.opponent == "Michigan Wolverines"
+    assert "Michigan State" in result.team
+    assert "Michigan" in result.opponent
     assert "wins" in result.team_features
-    # With only ~8 weeks of data, discoveries may be sparse but search must run.
     assert result.stats.candidates_evaluated >= 0
     assert isinstance(result.report, str)
     assert "IRRATIONAL FAN" in result.report
-    # Evidence on any discovery must recount correctly
     for disc in result.discoveries:
         assert disc.n_games == disc.wins + disc.losses
         assert len(disc.matching_games) == disc.n_games

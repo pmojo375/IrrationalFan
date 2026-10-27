@@ -1,15 +1,155 @@
-"""Process CFB schedule parquet into one row per team per game with prior records."""
+"""Process CFB schedule + weekly summary parquets into team-game rows.
 
+Source data (sportsdataverse / cfbfastR):
+  https://github.com/sportsdataverse/cfbfastR-cfb-data/tree/main/cfb/cfb_schedules/parquet
+  https://github.com/sportsdataverse/cfbfastR-cfb-data/tree/main/cfb/cfb_team_summaries_weekly/parquet
+"""
+
+from __future__ import annotations
+
+import argparse
+import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import pandas as pd
 
-INPUT_PATH = Path(__file__).with_name("cfb_schedule_2026.parquet")
-SUMMARIES_PATH = Path(__file__).with_name("cfb_team_summaries_weekly_2026.parquet")
-OUTPUT_PATH = Path(__file__).with_name("cfb_team_games_2026.parquet")
+ROOT = Path(__file__).resolve().parent
+DATA_DIR = ROOT / "data"
+SCHEDULES_DIR = DATA_DIR / "schedules"
+SUMMARIES_DIR = DATA_DIR / "summaries"
+OUTPUT_PATH = ROOT / "cfb_team_games.parquet"
+
+GITHUB_RAW = "https://github.com/sportsdataverse/cfbfastR-cfb-data/raw/main/cfb"
+SCHEDULE_YEARS = range(2001, 2027)
+SUMMARY_YEARS = range(2004, 2027)
 
 # Identity / join keys from weekly summaries — not copied onto game rows as-is.
 _SUMMARY_KEY_COLS = ("team_id", "pos_team", "season", "through_week")
+
+
+def download_season_files(force: bool = False, workers: int = 6) -> None:
+    """Download schedule + weekly summary parquets into data/."""
+    jobs: list[tuple[Path, str]] = []
+    for year in SCHEDULE_YEARS:
+        name = f"cfb_schedules_{year}.parquet"
+        dest = SCHEDULES_DIR / name
+        remote = f"{GITHUB_RAW}/cfb_schedules/parquet/{name}"
+        jobs.append((dest, remote))
+    for year in SUMMARY_YEARS:
+        name = f"cfb_team_summaries_weekly_{year}.parquet"
+        dest = SUMMARIES_DIR / name
+        remote = f"{GITHUB_RAW}/cfb_team_summaries_weekly/parquet/{name}"
+        jobs.append((dest, remote))
+
+    SCHEDULES_DIR.mkdir(parents=True, exist_ok=True)
+    SUMMARIES_DIR.mkdir(parents=True, exist_ok=True)
+
+    def fetch(dest: Path, url: str) -> str:
+        if dest.exists() and dest.stat().st_size > 1000 and not force:
+            return f"skip {dest.name}"
+        urllib.request.urlretrieve(url, dest)
+        return f"ok   {dest.name} ({dest.stat().st_size / 1e6:.2f} MB)"
+
+    print(f"Downloading {len(jobs)} files into {DATA_DIR} ...")
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = [pool.submit(fetch, dest, url) for dest, url in jobs]
+        for fut in as_completed(futs):
+            print(fut.result())
+
+
+def normalize_schedule(raw: pd.DataFrame) -> pd.DataFrame:
+    """Map sportsdataverse schedule columns onto the processor schema."""
+    df = raw.copy()
+
+    rename = {}
+    if "start_date" in df.columns and "game_date" not in df.columns:
+        rename["start_date"] = "game_date"
+    if "home_points" in df.columns and "home_score" not in df.columns:
+        rename["home_points"] = "home_score"
+    if "away_points" in df.columns and "away_score" not in df.columns:
+        rename["away_points"] = "away_score"
+    if rename:
+        df = df.rename(columns=rename)
+
+    required = [
+        "game_id",
+        "season",
+        "week",
+        "season_type",
+        "game_date",
+        "neutral_site",
+        "conference_competition",
+        "venue",
+        "attendance",
+        "status",
+        "home_id",
+        "home_team",
+        "home_abbreviation",
+        "home_score",
+        "home_winner",
+        "away_id",
+        "away_team",
+        "away_abbreviation",
+        "away_score",
+        "away_winner",
+    ]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"Schedule missing columns: {missing}")
+
+    out = df[required].copy()
+
+    # Keep only games with known final scores / winners.
+    scored = out["home_score"].notna() & out["away_score"].notna()
+    decided = out["home_winner"].notna() & out["away_winner"].notna()
+    out = out.loc[scored & decided].copy()
+
+    # Normalize dtypes used downstream.
+    out["season"] = out["season"].astype("int64")
+    out["week"] = out["week"].astype("int64")
+    out["home_score"] = pd.to_numeric(out["home_score"], errors="coerce")
+    out["away_score"] = pd.to_numeric(out["away_score"], errors="coerce")
+    out["home_winner"] = out["home_winner"].astype(bool)
+    out["away_winner"] = out["away_winner"].astype(bool)
+    out["neutral_site"] = out["neutral_site"].fillna(0).astype(bool)
+    out["conference_competition"] = out["conference_competition"].fillna(0).astype(bool)
+    if out["status"].isna().any():
+        out["status"] = out["status"].fillna("STATUS_FINAL")
+
+    return out
+
+
+def load_all_schedules() -> pd.DataFrame:
+    files = sorted(SCHEDULES_DIR.glob("cfb_schedules_*.parquet"))
+    if not files:
+        raise FileNotFoundError(
+            f"No schedule parquets in {SCHEDULES_DIR}. Run: python process.py --download"
+        )
+    frames = []
+    for path in files:
+        raw = pd.read_parquet(path)
+        frames.append(normalize_schedule(raw))
+        print(f"  schedule {path.name}: {len(frames[-1])} scored games")
+    games = pd.concat(frames, ignore_index=True)
+    games = games.drop_duplicates(subset=["game_id"], keep="last")
+    print(f"Loaded {len(games)} scored schedule rows across {games['season'].nunique()} seasons")
+    return games
+
+
+def load_all_summaries() -> pd.DataFrame:
+    files = sorted(SUMMARIES_DIR.glob("cfb_team_summaries_weekly_*.parquet"))
+    if not files:
+        print(f"No summary parquets in {SUMMARIES_DIR}; continuing without weekly stats")
+        return pd.DataFrame()
+    frames = [pd.read_parquet(path) for path in files]
+    summaries = pd.concat(frames, ignore_index=True)
+    print(
+        f"Loaded {len(summaries)} weekly summary rows "
+        f"across {summaries['season'].nunique()} seasons "
+        f"({len(summaries.columns)} cols)"
+    )
+    return summaries
 
 
 def expand_to_team_rows(games: pd.DataFrame) -> pd.DataFrame:
@@ -56,8 +196,7 @@ def expand_to_team_rows(games: pd.DataFrame) -> pd.DataFrame:
 
 def add_datetime_parts(df: pd.DataFrame) -> pd.DataFrame:
     """Split game_date into year, month, day, and time (US Eastern)."""
-    # America/New_York follows EDT/EST for the calendar (EDT through early Nov).
-    dt = pd.to_datetime(df["game_date"], utc=True).dt.tz_convert("America/New_York")
+    dt = pd.to_datetime(df["game_date"], utc=True, errors="coerce").dt.tz_convert("America/New_York")
     df = df.copy()
     df["year"] = dt.dt.year
     df["month"] = dt.dt.month
@@ -68,20 +207,19 @@ def add_datetime_parts(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_prior_records(df: pd.DataFrame) -> pd.DataFrame:
-    """Attach each team's W-L record entering the game (prior games only)."""
+    """Attach each team's W-L record entering the game (prior games only, within season)."""
     df = df.sort_values(
-        ["team_id", "game_datetime", "game_id"],
+        ["season", "team_id", "game_datetime", "game_id"],
         kind="mergesort",
     ).copy()
 
-    # Only final games count toward record; all rows here are final, but keep the guard.
-    final_mask = df["status"].eq("STATUS_FINAL")
-    win = (df["won"] & final_mask).astype(int)
-    loss = ((~df["won"]) & final_mask).astype(int)
+    # All rows here already have final scores; count every decided game.
+    win = df["won"].astype(bool).astype(int)
+    loss = (~df["won"].astype(bool)).astype(int)
 
-    # Prior record = cumulative through previous games only (exclude this game).
-    df["wins"] = win.groupby(df["team_id"]).cumsum() - win
-    df["losses"] = loss.groupby(df["team_id"]).cumsum() - loss
+    group = [df["season"], df["team_id"]]
+    df["wins"] = win.groupby(group).cumsum() - win
+    df["losses"] = loss.groupby(group).cumsum() - loss
     df["record"] = df["wins"].astype(str) + "-" + df["losses"].astype(str)
     return df
 
@@ -105,7 +243,6 @@ def _prepare_summary_frame(summaries: pd.DataFrame, prefix: str = "") -> pd.Data
         rename = {c: f"{prefix}{c}" for c in feature_cols}
         out = out.rename(columns=rename)
 
-    # Drop duplicate team-week rows if any (keep last).
     out = out.drop_duplicates(subset=["team_id", "season", "through_week"], keep="last")
     return out
 
@@ -118,6 +255,9 @@ def add_weekly_summaries(df: pd.DataFrame, summaries: pd.DataFrame) -> pd.DataFr
 
     Week 1 and teams missing from the summary file remain null — never filled with zero.
     """
+    if summaries.empty:
+        return df
+
     base = df.copy()
     base["team_id"] = pd.to_numeric(base["team_id"], errors="coerce").astype("Int64")
     base["opponent_id"] = pd.to_numeric(base["opponent_id"], errors="coerce").astype("Int64")
@@ -153,17 +293,16 @@ def add_weekly_summaries(df: pd.DataFrame, summaries: pd.DataFrame) -> pd.DataFr
     return merged
 
 
-def main() -> None:
-    games = pd.read_parquet(INPUT_PATH)
+def build_team_games() -> pd.DataFrame:
+    print("Loading schedules...")
+    games = load_all_schedules()
     team_games = expand_to_team_rows(games)
     team_games = add_datetime_parts(team_games)
     team_games = add_prior_records(team_games)
 
-    if SUMMARIES_PATH.exists():
-        summaries = pd.read_parquet(SUMMARIES_PATH)
-        team_games = add_weekly_summaries(team_games, summaries)
-    else:
-        print(f"No summaries file at {SUMMARIES_PATH.name}; skipping weekly stats join")
+    print("Loading weekly summaries...")
+    summaries = load_all_summaries()
+    team_games = add_weekly_summaries(team_games, summaries)
 
     team_games = team_games.sort_values(
         ["game_datetime", "game_id", "is_home"],
@@ -171,7 +310,6 @@ def main() -> None:
         kind="mergesort",
     ).reset_index(drop=True)
 
-    # Core game columns first, then any attached summary features.
     core_columns = [
         "game_id",
         "season",
@@ -202,16 +340,48 @@ def main() -> None:
         "game_date",
     ]
     extra = [c for c in team_games.columns if c not in core_columns and c != "game_datetime"]
-    columns = core_columns + extra
-    out = team_games[columns]
+    return team_games[core_columns + extra]
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Build multi-season CFB team-game dataset")
+    parser.add_argument(
+        "--download",
+        action="store_true",
+        help="Download/refresh schedule + summary parquets from sportsdataverse",
+    )
+    parser.add_argument(
+        "--force-download",
+        action="store_true",
+        help="Re-download even when local files already exist",
+    )
+    args = parser.parse_args(argv)
+
+    if args.download or args.force_download:
+        download_season_files(force=args.force_download)
+
+    out = build_team_games()
     out.to_parquet(OUTPUT_PATH, index=False)
-    print(f"Wrote {len(out)} rows x {len(out.columns)} cols to {OUTPUT_PATH.name}")
-    preview_cols = [c for c in core_columns if c in out.columns][:12]
-    if "conference" in out.columns:
-        preview_cols += ["conference", "EPAplay_off", "opp_EPAplay_off"]
+    print(
+        f"Wrote {len(out)} rows x {len(out.columns)} cols to {OUTPUT_PATH.name} "
+        f"(seasons {int(out['season'].min())}-{int(out['season'].max())})"
+    )
+    preview_cols = [
+        "season",
+        "week",
+        "team",
+        "opponent",
+        "wins",
+        "losses",
+        "conference",
+        "EPAplay_off",
+        "opp_EPAplay_off",
+    ]
     preview_cols = [c for c in preview_cols if c in out.columns]
-    print(out.loc[out["week"] >= 2, preview_cols].head(6).to_string(index=False))
+    sample = out.loc[(out["week"] >= 2) & (out["season"] >= 2024), preview_cols].head(8)
+    print(sample.to_string(index=False))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

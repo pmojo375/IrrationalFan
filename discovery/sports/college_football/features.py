@@ -82,18 +82,17 @@ def enrich_team_games(df: pd.DataFrame) -> pd.DataFrame:
     else:
         out["_sort_date"] = pd.NaT
 
-    out = out.sort_values(
-        ["team_id", "_sort_date", "game_id"],
-        kind="mergesort",
-    ).reset_index(drop=True)
+    sort_cols = ["season", "team_id", "_sort_date", "game_id"] if "season" in out.columns else ["team_id", "_sort_date", "game_id"]
+    out = out.sort_values(sort_cols, kind="mergesort").reset_index(drop=True)
 
-    # Entering streaks use only prior game results (current game excluded).
+    # Entering streaks use only prior game results within a season (current game excluded).
+    streak_group = ["season", "team_id"] if "season" in out.columns else ["team_id"]
     out["win_streak"] = (
-        out.groupby("team_id", group_keys=False)["won"]
+        out.groupby(streak_group, group_keys=False)["won"]
         .apply(lambda s: _entering_streaks(s, positive=True))
     )
     out["loss_streak"] = (
-        out.groupby("team_id", group_keys=False)["won"]
+        out.groupby(streak_group, group_keys=False)["won"]
         .apply(lambda s: _entering_streaks(s, positive=False))
     )
     out["win_streak"] = out["win_streak"].astype(int)

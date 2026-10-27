@@ -8,7 +8,19 @@ from pathlib import Path
 from discovery.engine.models import RankingWeights, SearchConfig
 
 
-DATA_PATH = Path(__file__).resolve().parent.parent / "cfb_team_games_2026.parquet"
+_ROOT = Path(__file__).resolve().parent.parent
+
+
+def default_data_path() -> Path:
+    """Prefer the multi-season build; fall back to legacy single-season file."""
+    multi = _ROOT / "cfb_team_games.parquet"
+    if multi.exists():
+        return multi
+    return _ROOT / "cfb_team_games_2026.parquet"
+
+
+# Resolved at import for convenience; EngineConfig re-resolves via default_data_path.
+DATA_PATH = default_data_path()
 
 
 @dataclass
@@ -27,4 +39,4 @@ class EngineConfig:
     )
     ranking: RankingWeights = field(default_factory=RankingWeights)
     top_n: int = 20
-    data_path: Path = field(default_factory=lambda: DATA_PATH)
+    data_path: Path = field(default_factory=default_data_path)
