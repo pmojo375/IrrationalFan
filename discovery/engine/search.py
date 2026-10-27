@@ -24,7 +24,7 @@ from discovery.engine.models import (
     SearchConfig,
     SearchStats,
 )
-from discovery.engine.ranking import deduplicate_discoveries, score_discovery
+from discovery.engine.ranking import deduplicate_discoveries, score_discovery, narrative_signature
 from discovery.engine.streaks import recent_favorable_streak
 from discovery.engine.validation import recount_record
 
@@ -404,36 +404,32 @@ class DiscoveryEngine:
 
 
 def _diverse_top(discoveries: list[Discovery], top_n: int) -> list[Discovery]:
-    """
-    Rank by score while keeping some scope/objective diversity in the top list.
-    """
-    ordered = sorted(discoveries, key=lambda d: d.ranking_score, reverse=True)
-    if len(ordered) <= top_n:
-        return ordered
+    """Greedy diversity selection: avoid near-identical stories in the final report.
 
+    A scope/objective can contribute several results, but only one version of a
+    feature combination. Do not pad the output with repetitions to reach top_n.
+    """
+    if top_n <= 0:
+        return []
+    ordered = sorted(discoveries, key=lambda d: d.ranking_score, reverse=True)
     selected: list[Discovery] = []
-    seen_scope_obj: dict[tuple[str, str], int] = {}
-    # First pass: take the best from each scope/objective pair
-    for disc in ordered:
-        key = (disc.scope, disc.objective)
-        if seen_scope_obj.get(key, 0) == 0:
-            selected.append(disc)
-            seen_scope_obj[key] = 1
+    signatures: set[tuple[str, frozenset[str]]] = set()
+    # Reserve one opportunity per scope, then select the strongest distinct stories.
+    for scope in dict.fromkeys(d.scope for d in ordered):
+        for d in ordered:
+            signature = (d.scope, narrative_signature(d))
+            if d.scope == scope and signature not in signatures:
+                selected.append(d)
+                signatures.add(signature)
+                break
         if len(selected) >= top_n:
             return selected
-
-    # Second pass: fill remaining slots by score, with a soft per-scope cap
-    selected_ids = {id(d) for d in selected}
-    for disc in ordered:
-        if id(disc) in selected_ids:
+    for d in ordered:
+        signature = (d.scope, narrative_signature(d))
+        if signature in signatures:
             continue
-        key = (disc.scope, disc.objective)
-        if seen_scope_obj.get(key, 0) >= max(3, top_n // 2):
-            continue
-        selected.append(disc)
-        selected_ids.add(id(disc))
-        seen_scope_obj[key] = seen_scope_obj.get(key, 0) + 1
+        selected.append(d)
+        signatures.add(signature)
         if len(selected) >= top_n:
             break
-
     return sorted(selected, key=lambda d: d.ranking_score, reverse=True)

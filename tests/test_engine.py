@@ -475,3 +475,39 @@ def test_resolve_team_and_real_discover(real_data_available):
     for disc in result.discoveries:
         assert disc.n_games == disc.wins + disc.losses
         assert len(disc.matching_games) == disc.n_games
+
+
+def test_default_features_prioritize_fan_friendly_stats():
+    from discovery.sports.college_football.features import advanced_feature_specs
+    defaults = {f.name for f in feature_specs()}
+    advanced = {f.name for f in advanced_feature_specs()}
+    assert "wins" in defaults and "opp_wins" in defaults
+    assert "EPAplay_off" not in defaults
+    assert "EPAplay_off" in advanced
+
+
+def test_diversity_removes_threshold_variations_even_with_different_records():
+    from discovery.engine.models import Discovery
+    from discovery.engine.search import _diverse_top
+
+    def make(conditions, score, scope="team"):
+        return Discovery(
+            scope=scope, conditions=conditions, wins=7, losses=1,
+            n_games=8, win_pct=0.875, streak=3, ranking_score=score,
+            description="", matching_games=[]
+        )
+
+    a = make((Condition("month", Operator.EQ, 11), Condition("opp_wins", Operator.GE, 5)), 90)
+    b = make((Condition("month", Operator.EQ, 11), Condition("opp_wins", Operator.GE, 6)), 85)
+    c = make((Condition("is_home", Operator.EQ, True),), 80)
+    result = _diverse_top([a, b, c], top_n=20)
+    assert result == [a, c]
+
+
+def test_more_conditions_no_longer_receive_automatic_bonus():
+    weights = RankingWeights()
+    simple = score_discovery(wins=8, losses=0, streak=8, n_conditions=1,
+                             population_size=100, weights=weights)
+    complex_ = score_discovery(wins=8, losses=0, streak=8, n_conditions=4,
+                               population_size=100, weights=weights)
+    assert simple > complex_
