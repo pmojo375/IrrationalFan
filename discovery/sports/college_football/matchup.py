@@ -13,6 +13,7 @@ from discovery.engine.models import Discovery, FeatureSpec, SearchStats
 from discovery.engine.search import DiscoveryEngine
 from discovery.engine.validation import apply_conditions, build_matching_games, recount_record
 from discovery.sports.college_football.dates import before_as_of_mask, parse_as_of, parse_game_dates
+from discovery.sports.college_football.schedule import resolve_scheduled_game
 from discovery.sports.college_football.features import (
     LEAKAGE_COLUMNS,
     MONTH_NAMES,
@@ -131,6 +132,11 @@ def _team_state_after_latest(
     else:
         win_streak = 0
         loss_streak = int(last["loss_streak"]) + 1
+
+    # Records and entering streaks are season-specific. The latest completed
+    # game can be from the previous season for an early-season matchup.
+    if as_of is not None and "season" in last.index and int(last["season"]) < as_of.year:
+        wins = losses = games_played = win_streak = loss_streak = 0
 
     win_pct = wins / games_played if games_played else float("nan")
     state: dict[str, Any] = {
@@ -395,7 +401,7 @@ def discover(
     team: str,
     opponent: str,
     game_date: str,
-    home: bool = True,
+    home: Optional[bool] = None,
     *,
     top_n: int = 20,
     scopes: Optional[Sequence[str]] = None,
@@ -431,6 +437,7 @@ def discover(
     opponent_id = resolve_team_id(df, opponent)
     team_name = display_name_for_team_id(df, team_id)
     opp_name = display_name_for_team_id(df, opponent_id)
+    home = resolve_scheduled_game(team_id, opponent_id, game_date, home=home)
 
     search_cfg = replace(cfg.search)
     if scopes is not None:
