@@ -11,7 +11,6 @@ import numpy as np
 import pandas as pd
 
 from discovery.engine.conditions import (
-    apply_conditions,
     can_combine,
     conditions_apply_to_current,
     generate_atomic_conditions,
@@ -27,7 +26,7 @@ from discovery.engine.models import (
 )
 from discovery.engine.ranking import deduplicate_discoveries, score_discovery, narrative_signature
 from discovery.engine.streaks import recent_favorable_streak
-from discovery.engine.validation import recount_record
+from discovery.engine.validation import apply_conditions, recount_record
 
 
 DescriptionFn = Callable[[str, Sequence[Condition], Discovery], str]
