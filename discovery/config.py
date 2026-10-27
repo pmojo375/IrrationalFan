@@ -33,7 +33,7 @@ class EngineConfig:
             max_depth=4,
             min_sample_size=3,
             max_conditions=4,
-            max_atomic_candidates=80,
+            max_atomic_candidates=120,
             scopes=("team", "opponent", "all", "h2h"),
         )
     )

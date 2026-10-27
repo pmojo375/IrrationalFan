@@ -17,6 +17,7 @@ from discovery.sports.college_football.features import (
     assert_no_leakage,
     enrich_team_games,
     feature_specs,
+    searchable_feature_names,
 )
 from discovery.sports.college_football.formatting import describe_discovery, format_report
 
@@ -120,7 +121,7 @@ def _team_state_after_latest(df: pd.DataFrame, team_id: int) -> dict[str, Any]:
         loss_streak = int(last["loss_streak"]) + 1
 
     win_pct = wins / games_played if games_played else float("nan")
-    return {
+    state: dict[str, Any] = {
         "wins": wins,
         "losses": losses,
         "games_played": games_played,
@@ -132,6 +133,55 @@ def _team_state_after_latest(df: pd.DataFrame, team_id: int) -> dict[str, Any]:
         "team": team,
         "team_id": int(last["team_id"]),
     }
+
+    # Carry forward advanced / goofy fields from the latest available snapshot.
+    # Summary cols on the last game row are prior-week; still the best in-row estimate
+    # until the next week's prior join exists.
+    wanted = searchable_feature_names()
+    for col in wanted:
+        if col.startswith("opp_") or col in state:
+            continue
+        if col in last.index and not pd.isna(last[col]):
+            state[col] = last[col]
+
+    # Prefer latest non-null conference/division/EPA-style fields from this season.
+    season = int(last["season"]) if "season" in last.index and not pd.isna(last["season"]) else None
+    if season is not None:
+        season_rows = sub[sub["season"] == season]
+        for col in (
+            "conference",
+            "division",
+            "EPAplay_off",
+            "EPAplay_def",
+            "EPAplay_margin",
+            "success_off",
+            "success_def",
+            "havoc_def",
+            "explosive_off",
+            "yardsplay_off",
+            "EPAplay_off_rank",
+            "EPAplay_def_rank",
+        ):
+            if col not in season_rows.columns:
+                continue
+            series = season_rows[col].dropna()
+            if not series.empty:
+                state[col] = series.iloc[-1]
+
+    # Expected attendance / home venue for goofy home-game patterns.
+    home_games = sub[sub["is_home"] == True] if "is_home" in sub.columns else sub.iloc[0:0]
+    if not home_games.empty:
+        if "venue" in home_games.columns:
+            venues = home_games["venue"].dropna()
+            if not venues.empty:
+                state["venue"] = venues.iloc[-1]
+        if "attendance" in home_games.columns:
+            atts = pd.to_numeric(home_games["attendance"], errors="coerce")
+            atts = atts[atts > 0]
+            if not atts.empty:
+                state["attendance"] = float(atts.tail(5).median())
+
+    return state
 
 
 def build_matchup_features(
@@ -182,7 +232,6 @@ def build_matchup_features(
             "month_name": month_name,
             "day_of_week": day_of_week,
             "week": None,
-            "season_type": 2,
             "opp_wins": opp_state["wins"],
             "opp_losses": opp_state["losses"],
             "opp_games_played": opp_state["games_played"],
@@ -194,6 +243,32 @@ def build_matchup_features(
             "win_diff": team_state["wins"] - opp_state["wins"],
             "opponent": opponent,
         }
+        # Mirror opponent advanced snapshot onto opp_* keys for the selected team view.
+        for key, value in opp_state.items():
+            if key in {
+                "wins",
+                "losses",
+                "games_played",
+                "win_pct",
+                "win_streak",
+                "loss_streak",
+                "has_winning_record",
+                "has_losing_record",
+                "team",
+                "team_id",
+                "venue",
+                "attendance",
+            }:
+                continue
+            team_feats[f"opp_{key}"] = value
+
+        if not home:
+            # Road game: venue/attendance should reflect the opponent's home spot when known.
+            if "venue" in opp_state:
+                team_feats["venue"] = opp_state["venue"]
+            if "attendance" in opp_state:
+                team_feats["attendance"] = opp_state["attendance"]
+
         opponent_feats = {
             **opp_state,
             "is_home": not bool(home),
@@ -203,7 +278,6 @@ def build_matchup_features(
             "month_name": month_name,
             "day_of_week": day_of_week,
             "week": None,
-            "season_type": 2,
             "opp_wins": team_state["wins"],
             "opp_losses": team_state["losses"],
             "opp_games_played": team_state["games_played"],
@@ -215,6 +289,23 @@ def build_matchup_features(
             "win_diff": opp_state["wins"] - team_state["wins"],
             "opponent": team,
         }
+        for key, value in team_state.items():
+            if key in {
+                "wins",
+                "losses",
+                "games_played",
+                "win_pct",
+                "win_streak",
+                "loss_streak",
+                "has_winning_record",
+                "has_losing_record",
+                "team",
+                "team_id",
+                "venue",
+                "attendance",
+            }:
+                continue
+            opponent_feats[f"opp_{key}"] = value
 
     # Apply explicit overrides to the selected team's feature vector (and mirrored keys)
     for key, value in overrides.items():
@@ -244,7 +335,7 @@ def build_matchup_features(
 
 
 def _row_to_features(row: Mapping[str, Any]) -> dict[str, Any]:
-    specs = {f.name for f in feature_specs()}
+    specs = searchable_feature_names()
     return {k: row.get(k) for k in specs if k in row}
 
 

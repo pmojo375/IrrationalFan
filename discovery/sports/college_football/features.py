@@ -9,14 +9,13 @@ import pandas as pd
 
 from discovery.engine.models import FeatureSpec
 
-# Columns that reflect postgame information and must never be used as conditions.
+# True postgame targets / identifiers — never searchable conditions.
 LEAKAGE_COLUMNS = frozenset(
     {
         "team_score",
         "opponent_score",
         "won",
         "favorable",
-        "attendance",  # typically finalized after the game
         "status",
     }
 )
@@ -36,10 +35,49 @@ MONTH_NAMES = {
     12: "December",
 }
 
+# Curated advanced / goofy columns from the weekly summaries + schedule metadata.
+# Kept selective so beam search stays tractable while still using the richer data.
+_ADVANCED_TEAM_FEATURES: list[tuple[str, str, str]] = [
+    # (column, kind, label)
+    ("conference", "categorical", "Conference"),
+    ("division", "categorical", "Division"),
+    ("venue", "categorical", "Venue"),
+    ("attendance", "numeric", "Attendance"),
+    ("EPAplay_off", "numeric", "Offensive EPA/play"),
+    ("EPAplay_def", "numeric", "Defensive EPA/play allowed"),
+    ("EPAplay_margin", "numeric", "EPA/play margin"),
+    ("success_off", "numeric", "Offensive success rate"),
+    ("success_def", "numeric", "Defensive success rate allowed"),
+    ("success_margin", "numeric", "Success-rate margin"),
+    ("explosive_off", "numeric", "Offensive explosive play rate"),
+    ("explosive_def", "numeric", "Explosive plays allowed"),
+    ("havoc_off", "numeric", "Havoc rate allowed on offense"),
+    ("havoc_def", "numeric", "Defensive havoc rate"),
+    ("havoc_margin", "numeric", "Havoc margin"),
+    ("yardsplay_off", "numeric", "Yards per play"),
+    ("yardsplay_def", "numeric", "Yards per play allowed"),
+    ("third_down_success_off", "numeric", "Third-down conversion rate"),
+    ("third_down_success_def", "numeric", "Opponent third-down rate"),
+    ("red_zone_success_off", "numeric", "Red-zone success rate"),
+    ("red_zone_success_def", "numeric", "Red-zone success allowed"),
+    ("turnovers_off", "numeric", "Turnovers committed per game"),
+    ("turnovers_def", "numeric", "Turnovers forced per game"),
+    ("turnover_margin", "numeric", "Turnover margin"),
+    ("passrate_off", "numeric", "Pass rate"),
+    ("rushrate_off", "numeric", "Rush rate"),
+    ("playsgame_off", "numeric", "Plays per game"),
+    ("EPAplay_off_rank", "numeric", "Offensive EPA/play rank"),
+    ("EPAplay_def_rank", "numeric", "Defensive EPA/play rank"),
+    ("success_off_rank", "numeric", "Offensive success-rate rank"),
+    ("success_def_rank", "numeric", "Defensive success-rate rank"),
+    ("havoc_def_rank", "numeric", "Havoc rank"),
+    ("explosive_off_rank", "numeric", "Explosive-play rank"),
+]
+
 
 def feature_specs() -> list[FeatureSpec]:
     """Pregame features available for automatic condition generation."""
-    return [
+    specs = [
         FeatureSpec("is_home", "boolean", "Home game", "home game"),
         FeatureSpec("neutral_site", "boolean", "Neutral site", "neutral-site game"),
         FeatureSpec("conference_competition", "boolean", "Conference game", "conference game"),
@@ -65,6 +103,25 @@ def feature_specs() -> list[FeatureSpec]:
         FeatureSpec("win_diff", "numeric", "Win differential vs opponent", "win differential"),
         FeatureSpec("day_of_week", "categorical", "Day of week", "day of week"),
     ]
+
+    for name, kind, label in _ADVANCED_TEAM_FEATURES:
+        specs.append(FeatureSpec(name, kind, label, label.lower()))
+        # Opponent copies already live on rows as opp_* from process.py
+        if name not in {"venue", "attendance"}:
+            specs.append(
+                FeatureSpec(
+                    f"opp_{name}",
+                    kind,
+                    f"Opponent {label[0].lower() + label[1:]}",
+                    f"opponent {label.lower()}",
+                )
+            )
+
+    return specs
+
+
+def searchable_feature_names() -> set[str]:
+    return {f.name for f in feature_specs() if f.name not in LEAKAGE_COLUMNS}
 
 
 def enrich_team_games(df: pd.DataFrame) -> pd.DataFrame:
@@ -114,36 +171,30 @@ def enrich_team_games(df: pd.DataFrame) -> pd.DataFrame:
 
     out["day_of_week"] = out["_sort_date"].dt.day_name()
 
-    # Opponent pregame features via same-game sibling row
-    sibling = out[
-        [
-            "game_id",
-            "team_id",
-            "wins",
-            "losses",
-            "games_played",
-            "win_pct",
-            "win_streak",
-            "loss_streak",
-            "has_winning_record",
-            "has_losing_record",
-        ]
-    ].rename(
+    # Opponent W-L / streak features via same-game sibling row.
+    # Skip columns that process.py already attached from weekly summaries.
+    record_cols = [
+        "wins",
+        "losses",
+        "games_played",
+        "win_pct",
+        "win_streak",
+        "loss_streak",
+        "has_winning_record",
+        "has_losing_record",
+    ]
+    sibling = out[["game_id", "team_id", *record_cols]].rename(
         columns={
             "team_id": "opponent_id",
-            "wins": "opp_wins",
-            "losses": "opp_losses",
-            "games_played": "opp_games_played",
-            "win_pct": "opp_win_pct",
-            "win_streak": "opp_win_streak",
-            "loss_streak": "opp_loss_streak",
-            "has_winning_record": "opp_has_winning_record",
-            "has_losing_record": "opp_has_losing_record",
+            **{c: f"opp_{c}" for c in record_cols},
         }
     )
+    existing_opp = [c for c in sibling.columns if c in out.columns and c not in {"game_id", "opponent_id"}]
+    sibling = sibling.drop(columns=existing_opp, errors="ignore")
     out = out.merge(sibling, on=["game_id", "opponent_id"], how="left")
 
-    out["win_diff"] = out["wins"] - out["opp_wins"]
+    if "opp_wins" in out.columns:
+        out["win_diff"] = out["wins"] - out["opp_wins"]
 
     out = out.drop(columns=["_sort_date"])
     return out

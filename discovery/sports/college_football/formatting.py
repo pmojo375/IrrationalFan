@@ -44,6 +44,18 @@ def condition_phrase(cond: Condition) -> str:
         return f"Month: {name}"
     if feat == "day_of_week":
         return f"Day: {val}"
+    if feat == "conference":
+        return f"Conference: {val}"
+    if feat == "opp_conference":
+        return f"Opponent conference: {val}"
+    if feat == "division":
+        return f"Division: {val}"
+    if feat == "opp_division":
+        return f"Opponent division: {val}"
+    if feat == "venue":
+        return f"Venue: {val}"
+    if feat == "attendance":
+        return _numeric_phrase("Attendance", op, val, integer=True)
     if feat == "week":
         return _numeric_phrase("Week", op, val)
     if feat == "wins":
@@ -82,17 +94,46 @@ def condition_phrase(cond: Condition) -> str:
         return _numeric_phrase("Win differential vs opponent", op, val)
     if feat == "season_type":
         return f"Season type: {val}"
-    return cond.display()
+
+    # Fall back to the condition label / feature name for advanced EPA-style fields.
+    label = cond.label or feat.replace("_", " ")
+    rate_like = any(
+        token in feat
+        for token in ("rate", "success", "havoc", "explosive", "passrate", "rushrate", "win_pct")
+    )
+    rank_like = feat.endswith("_rank")
+    if rank_like:
+        return _numeric_phrase(label, op, val, integer=True)
+    if rate_like and not feat.endswith("_off") and "EPA" not in feat:
+        return _numeric_phrase(label, op, val, pct=True)
+    if any(token in feat for token in ("success", "havoc", "explosive", "passrate", "rushrate")):
+        return _numeric_phrase(label, op, val, pct=True)
+    return _numeric_phrase(label, op, val)
 
 
-def _numeric_phrase(label: str, op: Operator, val: Any, pct: bool = False) -> str:
+def _numeric_phrase(
+    label: str,
+    op: Operator,
+    val: Any,
+    pct: bool = False,
+    integer: bool = False,
+) -> str:
     if pct:
         try:
             shown = f"{float(val):.0%}"
         except (TypeError, ValueError):
             shown = val
+    elif integer:
+        try:
+            shown = f"{int(round(float(val))):,}"
+        except (TypeError, ValueError):
+            shown = val
     else:
-        shown = val
+        try:
+            fval = float(val)
+            shown = f"{fval:.3f}" if abs(fval) < 10 and not fval.is_integer() else f"{fval:g}"
+        except (TypeError, ValueError, AttributeError):
+            shown = val
     if op == Operator.EQ:
         return f"{label} == {shown}"
     if op == Operator.GE:
