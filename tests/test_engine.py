@@ -410,6 +410,36 @@ def test_score_penalizes_tiny_samples():
     assert solid > tiny
 
 
+def test_mixed_timestamps_parse_and_as_of_cutoff():
+    from discovery.sports.college_football.dates import before_as_of_mask, parse_as_of, parse_game_dates
+
+    dates = pd.Series(
+        [
+            "2020-12-05T20:30Z",
+            "2026-10-24T16:00:00.000Z",
+            "2026-11-28T17:00:00.000Z",
+        ]
+    )
+    parsed = parse_game_dates(dates)
+    assert parsed.isna().sum() == 0
+    as_of = parse_as_of("2026-11-28")
+    mask = before_as_of_mask(dates, as_of)
+    assert mask.tolist() == [True, True, False]
+
+
+def test_discoveries_must_match_current_form():
+    from discovery.engine.conditions import condition_applies, conditions_apply_to_current
+    from discovery.engine.models import Condition, Operator
+
+    current = {"wins": 4, "losses": 3, "opp_win_pct": 0.571, "is_home": True}
+    good = Condition("wins", Operator.GE, 4)
+    bad = Condition("wins", Operator.GE, 8)
+    assert condition_applies(current, good)
+    assert not condition_applies(current, bad)
+    assert conditions_apply_to_current(current, [good, Condition("is_home", Operator.EQ, True)])
+    assert not conditions_apply_to_current(current, [good, bad])
+
+
 @pytest.fixture
 def real_data_available():
     from discovery.config import default_data_path
