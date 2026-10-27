@@ -1,0 +1,58 @@
+name: Run matchup discovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      team:
+        description: Team to support
+        required: true
+        default: Michigan State
+        type: string
+      opponent:
+        description: Opposing team
+        required: true
+        default: Michigan
+        type: string
+      game_date:
+        description: Game date (YYYY-MM-DD)
+        required: true
+        default: '2026-11-07'
+        type: string
+      top_n:
+        description: Number of discoveries
+        required: true
+        default: '20'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run discovery
+        env:
+          TEAM: ${{ inputs.team }}
+          OPPONENT: ${{ inputs.opponent }}
+          GAME_DATE: ${{ inputs.game_date }}
+          TOP_N: ${{ inputs.top_n }}
+        run: |
+          python -m discovery.main --team "$TEAM" --opponent "$OPPONENT" --date "$GAME_DATE" --top-n "$TOP_N" --output matchup_report.txt | tee run_log.txt
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: matchup-report
+          path: |
+            matchup_report.txt
+            run_log.txt
+          if-no-files-found: warn
+          retention-days: 30
