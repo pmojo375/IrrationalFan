@@ -71,8 +71,16 @@ def resolve_team_id(df: pd.DataFrame, query: str) -> int:
     exact = teams.loc[names.str.lower() == q]
     pool = exact
     if pool.empty:
+        # Match the school name at a word boundary, excluding longer school names.
+        # E.g. "Michigan" must not match "Michigan State Spartans".
         starts = teams.loc[names.str.lower().str.startswith(q)]
-        pool = starts
+        if not starts.empty:
+            candidates = starts.loc[starts["team"].astype(str).str.lower().str.slice(len(q)).str.strip().ne("")]
+            # Prefer the shortest school-name prefix; mascots follow the school name.
+            # A shorter matching name beats a longer university with the same prefix.
+            starts = starts.assign(_name_length=starts["team"].astype(str).str.len())
+            shortest = starts["_name_length"].min()
+            pool = starts.loc[starts["_name_length"] == shortest].drop(columns="_name_length")
     if pool.empty:
         contains = teams.loc[names.str.lower().str.contains(q, regex=False)]
         pool = contains
