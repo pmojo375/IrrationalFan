@@ -1,0 +1,5 @@
+/.pytest_cache
+/.vscode
+/discovery_msu_michigan.txt
+/discovery_osu_michigan.txt
+/venv
