@@ -435,6 +435,13 @@ def discover(
 
     team_id = resolve_team_id(df, team)
     opponent_id = resolve_team_id(df, opponent)
+    if team_id == opponent_id:
+        matched_names = sorted(df.loc[df["team_id"] == team_id, "team"].dropna().astype(str).unique().tolist())
+        raise ValueError(
+            f"Team resolution collision: {team!r} and {opponent!r} both resolve to "
+            f"team_id={team_id} (names in dataset: {matched_names}). "
+            "Check whether the processed parquet has correct team IDs and team names."
+        )
     team_name = display_name_for_team_id(df, team_id)
     opp_name = display_name_for_team_id(df, opponent_id)
     home = resolve_scheduled_game(team_id, opponent_id, game_date, home=home)
