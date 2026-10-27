@@ -26,7 +26,7 @@ from discovery.engine.models import (
 )
 from discovery.engine.ranking import deduplicate_discoveries, score_discovery
 from discovery.engine.streaks import recent_favorable_streak
-from discovery.engine.validation import apply_conditions, build_matching_games, recount_record
+from discovery.engine.validation import recount_record
 
 
 DescriptionFn = Callable[[str, Sequence[Condition], Discovery], str]
@@ -246,9 +246,8 @@ class BeamSearchStrategy(SearchStrategy):
         population_size: int,
         config: SearchConfig,
     ) -> list[Discovery]:
-        games = build_matching_games(
-            df, cand.mask, date_col=date_col, target_col=target_col, won_col="won"
-        )
+        # Defer building full evidence lists until after ranking/dedup — materializing
+        # matching games for every beam candidate dominated runtime.
         n_games = cand.wins + cand.losses
         win_pct = cand.wins / n_games if n_games else 0.0
 
@@ -268,7 +267,7 @@ class BeamSearchStrategy(SearchStrategy):
                     streak=cand.streak,
                     ranking_score=cand.score,
                     description="",
-                    matching_games=games,
+                    matching_games=[],
                     objective="record",
                     favorable_label=favorable_label,
                     population_size=population_size,
@@ -306,7 +305,7 @@ class BeamSearchStrategy(SearchStrategy):
                     streak=cand.streak,
                     ranking_score=streak_score,
                     description="",
-                    matching_games=games,
+                    matching_games=[],
                     objective="streak",
                     favorable_label=favorable_label,
                     population_size=population_size,

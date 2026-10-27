@@ -11,6 +11,7 @@ import pandas as pd
 from discovery.config import EngineConfig
 from discovery.engine.models import Discovery, FeatureSpec, SearchStats
 from discovery.engine.search import DiscoveryEngine
+from discovery.engine.validation import apply_conditions, build_matching_games, recount_record
 from discovery.sports.college_football.dates import before_as_of_mask, parse_as_of, parse_game_dates
 from discovery.sports.college_football.features import (
     LEAKAGE_COLUMNS,
@@ -21,6 +22,7 @@ from discovery.sports.college_football.features import (
     searchable_feature_names,
 )
 from discovery.sports.college_football.formatting import describe_discovery, format_report
+from discovery.engine.streaks import recent_favorable_streak
 
 
 @dataclass
@@ -499,7 +501,8 @@ def discover(
         top_n=top_n,
     )
 
-    # Final guard: keep only discoveries whose conditions match current form.
+    # Final guard: keep only discoveries whose conditions match current form,
+    # then attach historical evidence for the survivors only.
     from discovery.engine.conditions import conditions_apply_to_current
 
     filtered: list[Discovery] = []
@@ -507,6 +510,18 @@ def discover(
         current = opp_feats if disc.scope == "opponent" else team_feats
         if not conditions_apply_to_current(current, disc.conditions):
             continue
+        frame = frames.get(disc.scope)
+        if frame is not None:
+            mask = apply_conditions(frame, disc.conditions)
+            wins, losses, win_pct = recount_record(frame, mask, target_col="favorable")
+            disc.wins = wins
+            disc.losses = losses
+            disc.n_games = wins + losses
+            disc.win_pct = win_pct
+            disc.streak = recent_favorable_streak(frame, mask, target_col="favorable", date_col="game_date")
+            disc.matching_games = build_matching_games(
+                frame, mask, date_col="game_date", target_col="favorable", won_col="won"
+            )
         if not disc.description:
             disc.description = describe_discovery(disc, team=team_name, opponent=opp_name)
         filtered.append(disc)

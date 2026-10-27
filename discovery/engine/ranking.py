@@ -67,62 +67,72 @@ def score_discovery(
 def deduplicate_discoveries(
     discoveries: Sequence[Discovery],
     similarity_threshold: float = 0.75,
+    prefilter_top_k: int = 250,
 ) -> list[Discovery]:
     """
     Remove duplicate or nearly identical discoveries.
 
-    Prefer higher-scoring items. Two discoveries are near-duplicates when their
-    condition sets heavily overlap and their evidence sets are similar.
+    Prefer higher-scoring items. Uses cheap condition/record fingerprints only —
+    evidence-list comparisons are intentionally avoided (they were O(n² * games)).
     """
+    if not discoveries:
+        return []
+
     ordered = sorted(discoveries, key=lambda d: d.ranking_score, reverse=True)
+    if len(ordered) > prefilter_top_k:
+        ordered = ordered[:prefilter_top_k]
+
     kept: list[Discovery] = []
+    # Cache fingerprints so we never rebuild condition sets repeatedly.
+    kept_meta: list[tuple[set[tuple], frozenset[str], int, int, int]] = []
 
     for disc in ordered:
-        if any(_too_similar(disc, other, similarity_threshold) for other in kept):
+        cond_keys = _cond_keys(disc.conditions)
+        feats = frozenset(c.feature for c in disc.conditions)
+        meta = (cond_keys, feats, disc.wins, disc.losses, disc.n_games)
+
+        if any(
+            _too_similar_fast(
+                disc,
+                other,
+                cond_keys,
+                feats,
+                other_meta,
+                similarity_threshold,
+            )
+            for other, other_meta in zip(kept, kept_meta)
+        ):
             continue
         kept.append(disc)
+        kept_meta.append(meta)
     return kept
 
 
-def _too_similar(a: Discovery, b: Discovery, threshold: float) -> bool:
-    if a.scope != b.scope:
+def _too_similar_fast(
+    a: Discovery,
+    b: Discovery,
+    cond_a: set[tuple],
+    feats_a: frozenset[str],
+    b_meta: tuple[set[tuple], frozenset[str], int, int, int],
+    threshold: float,
+) -> bool:
+    if a.scope != b.scope or a.objective != b.objective:
         return False
-    if a.objective != b.objective:
-        return False
 
-    cond_sim = _jaccard(_cond_keys(a.conditions), _cond_keys(b.conditions))
-    if cond_sim >= threshold and a.wins == b.wins and a.losses == b.losses:
-        return True
-
-    # Same feature set with only threshold tweaks and nearly identical records
-    feat_a = {c.feature for c in a.conditions}
-    feat_b = {c.feature for c in b.conditions}
-    if feat_a == feat_b and abs(a.win_pct - b.win_pct) < 1e-9 and a.n_games == b.n_games:
-        return True
-
-    # Same / overlapping features with nearly identical evidence → keep the better score only
-    games_a = _game_keys(a)
-    games_b = _game_keys(b)
-    if games_a and games_b and _jaccard(games_a, games_b) >= 0.8:
-        if a.wins == b.wins and a.losses == b.losses:
-            if feat_a == feat_b or cond_sim >= 0.4 or _jaccard(feat_a, feat_b) >= 0.5:
-                return True
-            # Identical evidence sets are enough even with divergent condition wording
-            if _jaccard(games_a, games_b) >= 0.99:
-                return True
-
+    cond_b, feats_b, b_wins, b_losses, b_n = b_meta
+    if a.wins == b_wins and a.losses == b_losses and a.n_games == b_n:
+        cond_sim = _jaccard(cond_a, cond_b)
+        if cond_sim >= threshold:
+            return True
+        if feats_a == feats_b:
+            return True
+        if _jaccard(feats_a, feats_b) >= 0.8 and cond_sim >= 0.4:
+            return True
     return False
 
 
 def _cond_keys(conditions: Iterable[Condition]) -> set[tuple]:
     return {c.key() for c in conditions}
-
-
-def _game_keys(discovery: Discovery) -> set[tuple]:
-    keys: set[tuple] = set()
-    for g in discovery.matching_games:
-        keys.add((str(g.date), str(g.team), str(g.opponent), str(g.team_score), str(g.opponent_score)))
-    return keys
 
 
 def _jaccard(a: set, b: set) -> float:
