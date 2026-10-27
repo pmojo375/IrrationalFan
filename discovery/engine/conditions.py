@@ -29,26 +29,39 @@ def condition_applies(current: Mapping[str, Any], condition: Condition) -> bool:
     return _compare(value, condition.operator, condition.value)
 
 
+def conditions_apply_to_current(
+    current: Mapping[str, Any],
+    conditions: Sequence[Condition],
+) -> bool:
+    """Every condition must be true of the current matchup snapshot."""
+    return all(condition_applies(current, cond) for cond in conditions)
+
+
 def _compare(left: Any, op: Operator, right: Any) -> bool:
     if _is_missing(left) or _is_missing(right):
         return False
-    if op == Operator.EQ:
-        return left == right
-    if op == Operator.NE:
-        return left != right
+    if op in (Operator.EQ, Operator.NE):
+        try:
+            left_f = float(left)
+            right_f = float(right)
+            close = bool(np.isclose(left_f, right_f, rtol=1e-6, atol=1e-9, equal_nan=False))
+            return close if op == Operator.EQ else not close
+        except (TypeError, ValueError):
+            eq = left == right
+            return eq if op == Operator.EQ else not eq
     try:
         left_f = float(left)
         right_f = float(right)
     except (TypeError, ValueError):
         return False
     if op == Operator.GE:
-        return left_f >= right_f
+        return left_f >= right_f or bool(np.isclose(left_f, right_f, rtol=1e-6, atol=1e-9))
     if op == Operator.LE:
-        return left_f <= right_f
+        return left_f <= right_f or bool(np.isclose(left_f, right_f, rtol=1e-6, atol=1e-9))
     if op == Operator.GT:
-        return left_f > right_f
+        return left_f > right_f and not bool(np.isclose(left_f, right_f, rtol=1e-6, atol=1e-9))
     if op == Operator.LT:
-        return left_f < right_f
+        return left_f < right_f and not bool(np.isclose(left_f, right_f, rtol=1e-6, atol=1e-9))
     return False
 
 
@@ -172,15 +185,17 @@ def generate_atomic_conditions(
         except (TypeError, ValueError):
             continue
 
-        # Equality to current value
-        add(
-            Condition(
-                feature=feature.name,
-                operator=Operator.EQ,
-                value=_maybe_int(cur_f),
-                label=_default_label(feature, Operator.EQ, _maybe_int(cur_f)),
+        # Exact equality only for integer-like values (wins, ranks, attendance buckets).
+        # Continuous rates/EPA use threshold comparisons so "what they are now" stays meaningful.
+        if float(cur_f).is_integer():
+            add(
+                Condition(
+                    feature=feature.name,
+                    operator=Operator.EQ,
+                    value=_maybe_int(cur_f),
+                    label=_default_label(feature, Operator.EQ, _maybe_int(cur_f)),
+                )
             )
-        )
 
         # Candidate thresholds from observed unique values + a few rounded anchors
         uniques = sorted({float(x) for x in numeric.unique().tolist()})

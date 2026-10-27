@@ -11,6 +11,7 @@ import pandas as pd
 from discovery.config import EngineConfig
 from discovery.engine.models import Discovery, FeatureSpec, SearchStats
 from discovery.engine.search import DiscoveryEngine
+from discovery.sports.college_football.dates import before_as_of_mask, parse_as_of, parse_game_dates
 from discovery.sports.college_football.features import (
     LEAKAGE_COLUMNS,
     MONTH_NAMES,
@@ -94,18 +95,27 @@ def display_name_for_team_id(df: pd.DataFrame, team_id: int) -> str:
     sub = df.loc[df["team_id"] == team_id, ["team", "game_date"]].copy()
     if sub.empty:
         raise ValueError(f"No rows for team_id={team_id}")
-    sub["_dt"] = pd.to_datetime(sub["game_date"], utc=True, errors="coerce")
-    sub = sub.sort_values("_dt", kind="mergesort")
+    sub["_dt"] = parse_game_dates(sub["game_date"])
+    sub = sub.dropna(subset=["_dt"]).sort_values("_dt", kind="mergesort")
+    if sub.empty:
+        raise ValueError(f"No dated rows for team_id={team_id}")
     return str(sub.iloc[-1]["team"])
 
 
-def _team_state_after_latest(df: pd.DataFrame, team_id: int) -> dict[str, Any]:
-    """Current pregame features for a team as of after its most recent completed game."""
+def _team_state_after_latest(
+    df: pd.DataFrame,
+    team_id: int,
+    as_of: Optional[pd.Timestamp] = None,
+) -> dict[str, Any]:
+    """Pregame features for a team after its most recent completed game before as_of."""
     sub = df[df["team_id"] == team_id].copy()
     if sub.empty:
         raise ValueError(f"No historical rows for team_id={team_id}")
-    sub["_dt"] = pd.to_datetime(sub["game_date"], utc=True, errors="coerce")
-    sub = sub.sort_values(["_dt", "game_id"], kind="mergesort")
+    sub["_dt"] = parse_game_dates(sub["game_date"])
+    sub = sub.loc[before_as_of_mask(sub["game_date"], as_of)].copy()
+    sub = sub.dropna(subset=["_dt"]).sort_values(["_dt", "game_id"], kind="mergesort")
+    if sub.empty:
+        raise ValueError(f"No historical rows for team_id={team_id} before {as_of}")
     last = sub.iloc[-1]
     team = str(last["team"])
 
@@ -202,26 +212,26 @@ def build_matchup_features(
     Otherwise synthesize features from each team's latest completed state.
     """
     overrides = dict(overrides or {})
-    dt = pd.to_datetime(game_date, utc=True, errors="coerce")
-    month = int(dt.month) if not pd.isna(dt) else None
+    dt = parse_as_of(game_date)
+    month = int(dt.month) if dt is not None and not pd.isna(dt) else None
     month_name = MONTH_NAMES.get(month) if month else None
-    day_of_week = dt.day_name() if not pd.isna(dt) else None
+    day_of_week = dt.day_name() if dt is not None and not pd.isna(dt) else None
 
     # Try to find an existing scheduled/played row for this matchup
-    existing = df[
-        (df["team_id"] == team_id)
-        & (df["opponent_id"] == opponent_id)
-        & (pd.to_datetime(df["game_date"], utc=True, errors="coerce").dt.strftime("%Y-%m-%d")
-           == (dt.strftime("%Y-%m-%d") if not pd.isna(dt) else ""))
-    ]
+    if dt is not None and not pd.isna(dt):
+        same_day = parse_game_dates(df["game_date"]).dt.strftime("%Y-%m-%d") == dt.strftime("%Y-%m-%d")
+        existing = df[(df["team_id"] == team_id) & (df["opponent_id"] == opponent_id) & same_day]
+    else:
+        existing = df.iloc[0:0]
     if not existing.empty:
         row = existing.iloc[0].to_dict()
         team_feats = _row_to_features(row)
         opp_row = df[(df["game_id"] == row["game_id"]) & (df["team_id"] == opponent_id)]
         opponent_feats = _row_to_features(opp_row.iloc[0].to_dict()) if not opp_row.empty else {}
     else:
-        team_state = _team_state_after_latest(df, team_id)
-        opp_state = _team_state_after_latest(df, opponent_id)
+        # Only use games strictly before this matchup (backtest-safe).
+        team_state = _team_state_after_latest(df, team_id, as_of=dt)
+        opp_state = _team_state_after_latest(df, opponent_id, as_of=dt)
 
         team_feats = {
             **team_state,
@@ -349,17 +359,10 @@ def _prepare_scope_frames(
 ) -> dict[str, pd.DataFrame]:
     """Filter historical populations and attach a scope-specific favorable target."""
     hist = df.copy()
-    # Exclude the upcoming game itself if present (no leakage / circular evidence)
-    gd = pd.to_datetime(game_date, utc=True, errors="coerce")
-    if not pd.isna(gd):
-        same_day = pd.to_datetime(hist["game_date"], utc=True, errors="coerce").dt.strftime("%Y-%m-%d") == gd.strftime(
-            "%Y-%m-%d"
-        )
-        upcoming_mask = same_day & (
-            ((hist["team_id"] == team_id) & (hist["opponent_id"] == opponent_id))
-            | ((hist["team_id"] == opponent_id) & (hist["opponent_id"] == team_id))
-        )
-        hist = hist.loc[~upcoming_mask].copy()
+    # Backtest-safe: only games strictly before the matchup kickoff / as-of date.
+    as_of = parse_as_of(game_date)
+    if as_of is not None:
+        hist = hist.loc[before_as_of_mask(hist["game_date"], as_of)].copy()
 
     frames: dict[str, pd.DataFrame] = {}
     if "all" in scopes or "both" in scopes:
@@ -496,10 +499,19 @@ def discover(
         top_n=top_n,
     )
 
-    # Ensure every discovery has a description
+    # Final guard: keep only discoveries whose conditions match current form.
+    from discovery.engine.conditions import conditions_apply_to_current
+
+    filtered: list[Discovery] = []
     for disc in discoveries:
+        current = opp_feats if disc.scope == "opponent" else team_feats
+        if not conditions_apply_to_current(current, disc.conditions):
+            continue
         if not disc.description:
             disc.description = describe_discovery(disc, team=team_name, opponent=opp_name)
+        filtered.append(disc)
+    discoveries = filtered
+    stats.discoveries_after_dedup = len(discoveries)
 
     report = format_report(
         team=team_name,
@@ -508,6 +520,8 @@ def discover(
         home=home,
         discoveries=discoveries,
         stats=stats,
+        team_features=team_feats,
+        opponent_features=opp_feats,
     )
     result = DiscoverResult(
         team=team_name,

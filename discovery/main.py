@@ -23,8 +23,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--beam-width", type=int, default=None)
     p.add_argument(
         "--scopes",
-        default="team,opponent,all,h2h",
-        help="Comma-separated scopes: team,opponent,all,h2h,both",
+        default="team,opponent,h2h",
+        help="Comma-separated scopes: team,opponent,h2h,all,both",
     )
     p.add_argument("--output", type=str, default=None, help="Optional .txt output path")
     p.add_argument("--data", type=str, default=None, help="Path to team-games parquet")

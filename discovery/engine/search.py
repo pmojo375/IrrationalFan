@@ -10,7 +10,12 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from discovery.engine.conditions import can_combine, generate_atomic_conditions, precompute_masks
+from discovery.engine.conditions import (
+    can_combine,
+    conditions_apply_to_current,
+    generate_atomic_conditions,
+    precompute_masks,
+)
 from discovery.engine.models import (
     Condition,
     Discovery,
@@ -341,9 +346,12 @@ class DiscoveryEngine:
             weights=self.weights,
             favorable_label=favorable_label,
         )
-        # Attach descriptions and re-score with configured weights for record objs
+        # Attach descriptions and re-score with configured weights for record objs.
+        # Hard requirement: every condition must still describe the CURRENT matchup.
         final: list[Discovery] = []
         for disc in discoveries:
+            if not conditions_apply_to_current(current, disc.conditions):
+                continue
             score = score_discovery(
                 wins=disc.wins,
                 losses=disc.losses,

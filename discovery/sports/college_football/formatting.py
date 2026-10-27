@@ -227,6 +227,50 @@ def _short_date(value: Any) -> str:
     return text[:10] if len(text) >= 10 else text
 
 
+def format_current_snapshot(
+    *,
+    team: str,
+    opponent: str,
+    team_features: Mapping[str, Any],
+    opponent_features: Mapping[str, Any],
+) -> list[str]:
+    """Show the as-of form that every discovery is required to match."""
+    lines = [
+        "",
+        "CURRENT FORM (as of this matchup — all discoveries must match):",
+        (
+            f"  {team}: {team_features.get('wins', '?')}-{team_features.get('losses', '?')}"
+            f"  streak W{team_features.get('win_streak', '?')}/L{team_features.get('loss_streak', '?')}"
+            f"  home={team_features.get('is_home', '?')}"
+        ),
+        (
+            f"  {opponent}: {opponent_features.get('wins', '?')}-{opponent_features.get('losses', '?')}"
+            f"  streak W{opponent_features.get('win_streak', '?')}/L{opponent_features.get('loss_streak', '?')}"
+        ),
+    ]
+    extras = []
+    for label, key in (
+        ("Off EPA/play", "EPAplay_off"),
+        ("Opp off EPA/play", "opp_EPAplay_off"),
+        ("Venue", "venue"),
+        ("Attendance", "attendance"),
+        ("Conference", "conference"),
+    ):
+        val = team_features.get(key)
+        if val is not None and not (isinstance(val, float) and val != val):
+            if key == "attendance":
+                try:
+                    val = f"{int(round(float(val))):,}"
+                except (TypeError, ValueError):
+                    pass
+            elif isinstance(val, float) and key != "venue":
+                val = f"{val:.3f}"
+            extras.append(f"{label}={val}")
+    if extras:
+        lines.append("  " + " | ".join(extras))
+    return lines
+
+
 def format_report(
     *,
     team: str,
@@ -235,6 +279,8 @@ def format_report(
     home: bool,
     discoveries: Sequence[Discovery],
     stats: Optional[Any] = None,
+    team_features: Optional[Mapping[str, Any]] = None,
+    opponent_features: Optional[Mapping[str, Any]] = None,
 ) -> str:
     """Console / text-file report."""
     lines: list[str] = []
@@ -244,6 +290,15 @@ def format_report(
     lines.append(_pretty_date(game_date))
     location = "Home" if home else "Away"
     lines.append(f"Site: {location} for {team}")
+    if team_features is not None and opponent_features is not None:
+        lines.extend(
+            format_current_snapshot(
+                team=team,
+                opponent=opponent,
+                team_features=team_features,
+                opponent_features=opponent_features,
+            )
+        )
     lines.append("=" * 52)
 
     if not discoveries:

@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from discovery.engine.models import FeatureSpec
+from discovery.sports.college_football.dates import parse_game_dates
 
 # True postgame targets / identifiers — never searchable conditions.
 LEAKAGE_COLUMNS = frozenset(
@@ -135,7 +136,7 @@ def enrich_team_games(df: pd.DataFrame) -> pd.DataFrame:
 
     # Ensure chronological ordering for streak math
     if "game_date" in out.columns:
-        out["_sort_date"] = pd.to_datetime(out["game_date"], utc=True, errors="coerce")
+        out["_sort_date"] = parse_game_dates(out["game_date"])
     else:
         out["_sort_date"] = pd.NaT
 

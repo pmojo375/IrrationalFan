@@ -34,7 +34,8 @@ class EngineConfig:
             min_sample_size=3,
             max_conditions=4,
             max_atomic_candidates=120,
-            scopes=("team", "opponent", "all", "h2h"),
+            # Default to this-team / this-opponent narratives (not generic all-CFB).
+            scopes=("team", "opponent", "h2h"),
         )
     )
     ranking: RankingWeights = field(default_factory=RankingWeights)
