@@ -100,6 +100,13 @@ def normalize_schedule(raw: pd.DataFrame) -> pd.DataFrame:
 
     out = df[required].copy()
 
+    # Some canceled games have placeholder 0-0 scores and winner flags.
+    # A valid result requires an explicitly final game status.
+    final_status = out["status"].astype("string").str.upper().str.strip().isin(
+        {"STATUS_FINAL", "FINAL", "STATUS_FINAL_OVERTIME"}
+    )
+    out = out.loc[final_status].copy()
+
     # Keep only games with known final scores / winners.
     scored = out["home_score"].notna() & out["away_score"].notna()
     decided = out["home_winner"].notna() & out["away_winner"].notna()
