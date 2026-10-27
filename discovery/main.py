@@ -35,7 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.home and args.away:
         raise SystemExit("Specify only one of --home or --away")
-    home = True if args.home or not args.away else False
+    home = True if args.home else False if args.away else None
 
     scopes = tuple(s.strip() for s in args.scopes.split(",") if s.strip())
     discover(
