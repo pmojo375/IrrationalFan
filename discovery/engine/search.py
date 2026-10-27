@@ -414,13 +414,34 @@ def _diverse_top(discoveries: list[Discovery], top_n: int) -> list[Discovery]:
     ordered = sorted(discoveries, key=lambda d: d.ranking_score, reverse=True)
     selected: list[Discovery] = []
     signatures: set[tuple[str, frozenset[str]]] = set()
+    family_counts: dict[tuple[str, str], int] = {}
+
+    def family(d: Discovery) -> tuple[str, str]:
+        # Record and streak versions of the same situation are one family.
+        features = narrative_signature(d)
+        if "month" in features:
+            category = "calendar"
+        elif "is_home" in features or "neutral_site" in features:
+            category = "location"
+        elif "opp_wins" in features or "opp_win_streak" in features:
+            category = "opponent_form"
+        elif "wins" in features or "win_streak" in features:
+            category = "team_form"
+        else:
+            category = "other"
+        return d.scope, category
+
+    def add(d: Discovery) -> None:
+        selected.append(d)
+        signatures.add((d.scope, narrative_signature(d)))
+        key = family(d)
+        family_counts[key] = family_counts.get(key, 0) + 1
     # Reserve one opportunity per scope, then select the strongest distinct stories.
     for scope in dict.fromkeys(d.scope for d in ordered):
         for d in ordered:
             signature = (d.scope, narrative_signature(d))
             if d.scope == scope and signature not in signatures:
-                selected.append(d)
-                signatures.add(signature)
+                add(d)
                 break
         if len(selected) >= top_n:
             return selected
@@ -428,8 +449,9 @@ def _diverse_top(discoveries: list[Discovery], top_n: int) -> list[Discovery]:
         signature = (d.scope, narrative_signature(d))
         if signature in signatures:
             continue
-        selected.append(d)
-        signatures.add(signature)
+        if family_counts.get(family(d), 0) >= 3:
+            continue
+        add(d)
         if len(selected) >= top_n:
             break
     return sorted(selected, key=lambda d: d.ranking_score, reverse=True)
