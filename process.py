@@ -184,7 +184,8 @@ def expand_to_team_rows(games: pd.DataFrame) -> pd.DataFrame:
     home["team_score"] = games["home_score"]
     home["opponent_score"] = games["away_score"]
     home["won"] = games["home_winner"]
-    home["is_home"] = True
+    # Designated home team is not necessarily playing on its home field.
+    home["is_home"] = ~games["neutral_site"].astype(bool)
 
     away = games[common].copy()
     away["team_id"] = games["away_id"]
