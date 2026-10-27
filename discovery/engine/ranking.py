@@ -41,7 +41,8 @@ def score_discovery(
     sweet = math.exp(-0.5 * ((math.log1p(n) - math.log1p(12)) ** 2))
     score += weights.sample_size * sweet
     score += weights.rarity * rarity
-    score += weights.n_conditions * min(1.0, n_conditions / 4.0)
+    # More conditions are not inherently funnier; discourage overfitting.
+    score -= weights.n_conditions * max(0, n_conditions - 1) / 3.0
 
     if objective == "streak":
         score += weights.streak * min(1.0, streak / 8.0) * (1.0 if streak >= 3 else 0.4)
@@ -129,6 +130,20 @@ def _too_similar_fast(
         if _jaccard(feats_a, feats_b) >= 0.8 and cond_sim >= 0.4:
             return True
     return False
+
+
+def narrative_signature(disc: Discovery) -> frozenset[str]:
+    """Group variations of the same basic story, regardless of thresholds."""
+    aliases = {
+        "month_name": "month",
+        "win_pct": "wins", "games_played": "wins",
+        "has_winning_record": "wins", "has_losing_record": "wins",
+        "opp_win_pct": "opp_wins", "opp_games_played": "opp_wins",
+        "opp_has_winning_record": "opp_wins",
+        "opp_has_losing_record": "opp_wins",
+        "loss_streak": "win_streak", "opp_loss_streak": "opp_win_streak",
+    }
+    return frozenset(aliases.get(c.feature, c.feature) for c in disc.conditions)
 
 
 def _cond_keys(conditions: Iterable[Condition]) -> set[tuple]:
