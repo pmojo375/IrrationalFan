@@ -105,6 +105,13 @@ def feature_specs() -> list[FeatureSpec]:
         FeatureSpec("day_of_week", "categorical", "Day of week", "day of week"),
     ]
 
+    # Advanced efficiency metrics are useful for analysis, but overwhelm fan-facing
+    # discoveries. Keep the definitions available for an explicit opt-in.
+    return specs
+
+
+def advanced_feature_specs() -> list[FeatureSpec]:
+    specs: list[FeatureSpec] = []
     for name, kind, label in _ADVANCED_TEAM_FEATURES:
         specs.append(FeatureSpec(name, kind, label, label.lower()))
         # Opponent copies already live on rows as opp_* from process.py
@@ -122,7 +129,7 @@ def feature_specs() -> list[FeatureSpec]:
 
 
 def searchable_feature_names() -> set[str]:
-    return {f.name for f in feature_specs() if f.name not in LEAKAGE_COLUMNS}
+    return {f.name for f in [*feature_specs(), *advanced_feature_specs()] if f.name not in LEAKAGE_COLUMNS}
 
 
 def enrich_team_games(df: pd.DataFrame) -> pd.DataFrame:
