@@ -45,7 +45,8 @@ jobs:
           GAME_DATE: ${{ inputs.game_date }}
           TOP_N: ${{ inputs.top_n }}
         run: |
-          python -m discovery.main --team "$TEAM" --opponent "$OPPONENT" --date "$GAME_DATE" --top-n "$TOP_N" --output matchup_report.txt | tee run_log.txt
+          set -o pipefail
+          python -m discovery.main --team "$TEAM" --opponent "$OPPONENT" --date "$GAME_DATE" --top-n "$TOP_N" --output matchup_report.txt 2>&1 | tee run_log.txt
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4
