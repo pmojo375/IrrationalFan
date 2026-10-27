@@ -456,8 +456,8 @@ def test_resolve_team_and_real_discover(real_data_available):
     result = discover(
         team="Michigan State",
         opponent="Michigan",
-        game_date="2026-11-21",
-        home=True,
+        game_date="2026-11-07",
+        home=False,
         top_n=10,
         min_sample_size=3,
         max_conditions=3,
@@ -511,3 +511,23 @@ def test_more_conditions_no_longer_receive_automatic_bonus():
     complex_ = score_discovery(wins=8, losses=0, streak=8, n_conditions=4,
                                population_size=100, weights=weights)
     assert simple > complex_
+
+
+def test_schedule_requires_real_future_matchup(tmp_path):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from discovery.sports.college_football.schedule import resolve_scheduled_game
+
+    raw = pd.DataFrame([
+        {"start_date": "2026-11-07T17:00:00Z", "home_id": 2, "away_id": 1,
+         "home_points": None, "away_points": None, "status": "STATUS_SCHEDULED"},
+    ])
+    raw.to_parquet(tmp_path / "cfb_schedules_2026.parquet")
+    now = datetime(2026, 10, 27, tzinfo=ZoneInfo("America/New_York"))
+    assert resolve_scheduled_game(1, 2, "2026-11-07", schedule_dir=tmp_path, now=now) is False
+    with pytest.raises(ValueError, match="Incorrect venue"):
+        resolve_scheduled_game(1, 2, "2026-11-07", home=True, schedule_dir=tmp_path, now=now)
+    with pytest.raises(ValueError, match="Expected exactly one"):
+        resolve_scheduled_game(1, 2, "2026-11-08", schedule_dir=tmp_path, now=now)
+    with pytest.raises(ValueError, match="future"):
+        resolve_scheduled_game(1, 2, "2026-10-20", schedule_dir=tmp_path, now=now)
