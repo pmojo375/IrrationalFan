@@ -451,13 +451,22 @@ def real_data_available():
     return path
 
 
-def test_resolve_team_and_real_discover(real_data_available):
+def test_resolve_team_and_real_discover(real_data_available, monkeypatch):
+    # Freeze schedule validation so this fixture does not expire with wall time.
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from functools import partial
+    from discovery.sports.college_football.schedule import resolve_scheduled_game
+    monkeypatch.setattr(
+        "discovery.sports.college_football.matchup.resolve_scheduled_game",
+        partial(resolve_scheduled_game, now=datetime(2026, 10, 27, tzinfo=ZoneInfo("America/New_York"))),
+    )
     # Keep scopes narrow so the multi-season dataset stays test-friendly.
     result = discover(
         team="Michigan State",
         opponent="Michigan",
-        game_date="2026-11-21",
-        home=True,
+        game_date="2026-11-07",
+        home=False,
         top_n=10,
         min_sample_size=3,
         max_conditions=3,
@@ -488,7 +497,7 @@ def test_default_features_prioritize_fan_friendly_stats():
 
 def test_diversity_removes_threshold_variations_even_with_different_records():
     from discovery.engine.models import Discovery
-    from discovery.engine.search import _diverse_top
+    from discovery.engine.search import _evidence_diverse_top
 
     def make(conditions, score, scope="team"):
         return Discovery(
@@ -500,8 +509,8 @@ def test_diversity_removes_threshold_variations_even_with_different_records():
     a = make((Condition("month", Operator.EQ, 11), Condition("opp_wins", Operator.GE, 5)), 90)
     b = make((Condition("month", Operator.EQ, 11), Condition("opp_wins", Operator.GE, 6)), 85)
     c = make((Condition("is_home", Operator.EQ, True),), 80)
-    result = _diverse_top([a, b, c], top_n=20)
-    assert result == [a, c]
+    result = _evidence_diverse_top([a, b, c], [], top_n=20)
+    assert [d.conditions for d in result] == [a.conditions, c.conditions]
 
 
 def test_more_conditions_no_longer_receive_automatic_bonus():

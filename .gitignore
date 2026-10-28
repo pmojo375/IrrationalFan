@@ -3,3 +3,6 @@
 /discovery_msu_michigan.txt
 /discovery_osu_michigan.txt
 /venv
+__pycache__/
+*.py[cod]
+/cfb_team_games.parquet
