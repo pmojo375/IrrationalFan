@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 import numpy as np
@@ -429,71 +429,72 @@ def _evidence_diverse_top(
         mask = apply_conditions(frame, d.conditions)
         evidence.append(frozenset(frame.loc[mask, "game_id"].dropna().tolist()))
 
-    selected: list[int] = []
-    used_signatures: set[tuple[str, frozenset[str]]] = set()
-    objective_counts: dict[str, int] = {}
-    scope_counts: dict[str, int] = {}
-    # Limit streaks, rather than letting cumulative penalties become absurd.
-    max_streaks = max(1, (top_n * 2) // 5)
+    signatures = [narrative_signature(d) for d in ordered]
 
-    while len(selected) < min(top_n, len(ordered)):
-        best_index = None
-        best_score = float("-inf")
-        for i, d in enumerate(ordered):
-            if i in selected:
-                continue
-            signature = (d.scope, narrative_signature(d))
-            if signature in used_signatures:
-                continue
-            if d.objective == "streak" and objective_counts.get("streak", 0) >= max_streaks:
-                continue
-            # Adding a condition to the same evidence is not a new story.
-            candidate_keys = {condition.key() for condition in d.conditions}
-            if any(
-                ordered[j].scope == d.scope
-                and (
-                    candidate_keys.issuperset({condition.key() for condition in ordered[j].conditions})
-                    or {condition.key() for condition in ordered[j].conditions}.issuperset(candidate_keys)
-                )
-                for j in selected
-            ):
-                continue
-            overlaps = []
-            for j in selected:
-                if ordered[j].scope != d.scope:
+    def select(max_streaks: int) -> list[tuple[int, float]]:
+        selected: list[tuple[int, float]] = []
+        objective_counts: dict[str, int] = {}
+        scope_counts: dict[str, int] = {}
+        while len(selected) < min(top_n, len(ordered)):
+            best_index = None
+            best_score = float("-inf")
+            for i, d in enumerate(ordered):
+                if any(i == j for j, _ in selected):
                     continue
-                union = evidence[i] | evidence[j]
-                if union:
-                    overlaps.append(len(evidence[i] & evidence[j]) / len(union))
-            overlap = max(overlaps, default=0.0)
-            if overlap >= max_overlap:
-                continue
-            # Favor different evidence without sacrificing the funniest finds.
-            score = d.ranking_score - 22.0 * overlap
-            # Four-part clauses are usually too convoluted to be memorable.
-            score -= 5.0 * max(0, len(d.conditions) - 2) ** 2
-            # Modest diversity penalties that do not explode with list length.
-            score -= min(8.0, 2.0 * objective_counts.get(d.objective, 0))
-            score -= min(6.0, 2.0 * scope_counts.get(d.scope, 0))
-            # Reward conditions crossing independent dimensions.
-            features = narrative_signature(d)
-            dimensions = sum(bool(features & group) for group in (
-                {"month", "day_of_week", "week"},
-                {"wins", "losses", "win_streak"},
-                {"opp_wins", "opp_losses", "opp_win_streak"},
-                {"is_home", "neutral_site", "venue"},
-            ))
-            score += 2.0 * max(0, dimensions - 1)
-            if score > best_score:
-                best_score, best_index = score, i
-        if best_index is None or best_score < min_selection_score:
-            break
-        d = ordered[best_index]
-        # The score shown in the report must match the selection order.
-        d.ranking_score = best_score
-        selected.append(best_index)
-        used_signatures.add((d.scope, narrative_signature(d)))
-        objective_counts[d.objective] = objective_counts.get(d.objective, 0) + 1
-        scope_counts[d.scope] = scope_counts.get(d.scope, 0) + 1
+                if d.objective == "streak" and objective_counts.get("streak", 0) >= max_streaks:
+                    continue
+                # Threshold changes, aliases and extra clauses do not make a
+                # nested version of an already selected story a new narrative.
+                if any(
+                    ordered[j].scope == d.scope
+                    and (signatures[i] <= signatures[j] or signatures[j] <= signatures[i])
+                    for j, _ in selected
+                ):
+                    continue
+                overlaps = []
+                for j, _ in selected:
+                    if ordered[j].scope != d.scope:
+                        continue
+                    union = evidence[i] | evidence[j]
+                    if union:
+                        overlaps.append(len(evidence[i] & evidence[j]) / len(union))
+                overlap = max(overlaps, default=0.0)
+                if overlap >= max_overlap:
+                    continue
+                score = d.ranking_score - 22.0 * overlap
+                score -= 5.0 * max(0, len(d.conditions) - 2) ** 2
+                score -= min(8.0, 2.0 * objective_counts.get(d.objective, 0))
+                score -= min(6.0, 2.0 * scope_counts.get(d.scope, 0))
+                features = signatures[i]
+                dimensions = sum(bool(features & group) for group in (
+                    {"month", "day_of_week", "week"},
+                    {"wins", "losses", "win_streak"},
+                    {"opp_wins", "opp_losses", "opp_win_streak"},
+                    {"is_home", "neutral_site", "venue"},
+                ))
+                score += 2.0 * max(0, dimensions - 1)
+                if score > best_score:
+                    best_score, best_index = score, i
+            if best_index is None or best_score < min_selection_score:
+                break
+            d = ordered[best_index]
+            selected.append((best_index, best_score))
+            objective_counts[d.objective] = objective_counts.get(d.objective, 0) + 1
+            scope_counts[d.scope] = scope_counts.get(d.scope, 0) + 1
+        return selected
 
-    return [ordered[i] for i in selected]
+    # A requested-length cap alone lets a short report consist entirely of
+    # streaks. Tighten against the actual result count and rerun so records
+    # previously blocked by removed streaks can compete. Allow one standout
+    # streak for tiny reports, including when no strong records exist.
+    max_streaks = max(1, top_n * 2 // 5)
+    while True:
+        selected = select(max_streaks)
+        allowed = max(1, len(selected) * 2 // 5)
+        streaks = sum(ordered[i].objective == "streak" for i, _ in selected)
+        if streaks <= allowed:
+            break
+        max_streaks = allowed
+
+    # Keep raw candidates intact across selection passes and repeat calls.
+    return [replace(ordered[i], ranking_score=score) for i, score in selected]
