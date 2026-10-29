@@ -61,3 +61,51 @@ def resolve_scheduled_game(
     if home is not None and bool(home) != actual_home:
         raise ValueError(f"Incorrect venue: selected team is {'home' if actual_home else 'away'} according to the schedule.")
     return actual_home
+
+
+def scheduled_context(team_id: int, opponent_id: int, date: str) -> tuple[dict, dict, object]:
+    """Read metadata for the already-validated matchup from the saved schedule."""
+    from discovery.sports.college_football.context import schedule_metadata
+
+    requested = pd.Timestamp(date)
+    raw = pd.read_parquet(SCHEDULE_DIR / f"cfb_schedules_{requested.year}.parquet")
+    date_col = "game_date" if "game_date" in raw else "start_date"
+    dates = parse_game_dates(raw[date_col])
+    match = ((raw["home_id"].eq(team_id) & raw["away_id"].eq(opponent_id)) |
+             (raw["away_id"].eq(team_id) & raw["home_id"].eq(opponent_id)))
+    matches = raw.loc[match & dates.dt.tz_convert(EASTERN).dt.date.eq(requested.date())]
+    if len(matches) != 1:
+        raise ValueError("Schedule changed during discovery; rerun with a consistent cache")
+    row = matches.iloc[0]
+    home = bool(row["home_id"] == team_id)
+    team, opponent = schedule_metadata(row, home=home), schedule_metadata(row, home=not home)
+    # Seasonal team metadata fills only missing schedule conference names.
+    directory = SCHEDULE_DIR.parent / "teams"
+    source = directory / f"cfb_teams_{int(row.get('season', requested.year))}.parquet"
+    if source.exists():
+        from discovery.sports.college_football.context import normalize_conference
+        teams = pd.read_parquet(source)
+        column = "conference_name" if "conference_name" in teams else "conference"
+        if column in teams:
+            def conference(tid):
+                values = teams.loc[teams["team_id"].eq(tid), column].dropna()
+                return normalize_conference(values.iloc[-1]) if len(values) else pd.NA
+            for values, tid, oid in [(team, team_id, opponent_id), (opponent, opponent_id, team_id)]:
+                if pd.isna(values["conference"]):
+                    values["conference"] = conference(tid)
+                if pd.isna(values["opp_conference"]):
+                    values["opp_conference"] = conference(oid)
+    # A later matchup may have unplayed games before it. Their dates are known,
+    # but their results must not be replaced by the latest completed result.
+    kickoff = parse_game_dates(row[date_col])
+    for values, tid in [(team, team_id), (opponent, opponent_id)]:
+        prior = raw.loc[(raw["home_id"].eq(tid) | raw["away_id"].eq(tid))
+                        & raw["season"].eq(row["season"]) & dates.lt(kickoff)]
+        if "status" in prior:
+            prior = prior.loc[~prior["status"].astype("string").str.upper().str.contains(
+                "CANCEL|POSTPON", regex=True, na=False)]
+        values["_prior_games"] = [
+            (game[date_col], schedule_metadata(game, home=bool(game["home_id"] == tid))["conference_competition"])
+            for _, game in prior.iterrows()
+        ]
+    return team, opponent, row[date_col]

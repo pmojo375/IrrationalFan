@@ -8,54 +8,112 @@ Source data (sportsdataverse / cfbfastR):
 from __future__ import annotations
 
 import argparse
+import json
+import os
+import tempfile
+from datetime import datetime, timezone
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import pandas as pd
 
+from discovery.sports.college_football.context import add_pregame_context, normalize_conference
+
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 SCHEDULES_DIR = DATA_DIR / "schedules"
 SUMMARIES_DIR = DATA_DIR / "summaries"
+TEAMS_DIR = DATA_DIR / "teams"
 OUTPUT_PATH = ROOT / "cfb_team_games.parquet"
 
-GITHUB_RAW = "https://github.com/sportsdataverse/cfbfastR-cfb-data/raw/main/cfb"
-SCHEDULE_YEARS = range(2001, 2027)
-SUMMARY_YEARS = range(2004, 2027)
+RELEASES = "https://github.com/sportsdataverse/sportsdataverse-data/releases/download"
 
 # Identity / join keys from weekly summaries — not copied onto game rows as-is.
 _SUMMARY_KEY_COLS = ("team_id", "pos_team", "season", "through_week")
 
 
 def download_season_files(force: bool = False, workers: int = 6) -> None:
-    """Download schedule + weekly summary parquets into data/."""
-    jobs: list[tuple[Path, str]] = []
-    for year in SCHEDULE_YEARS:
-        name = f"cfb_schedules_{year}.parquet"
-        dest = SCHEDULES_DIR / name
-        remote = f"{GITHUB_RAW}/cfb_schedules/parquet/{name}"
-        jobs.append((dest, remote))
-    for year in SUMMARY_YEARS:
-        name = f"cfb_team_summaries_weekly_{year}.parquet"
-        dest = SUMMARIES_DIR / name
-        remote = f"{GITHUB_RAW}/cfb_team_summaries_weekly/parquet/{name}"
-        jobs.append((dest, remote))
+    """Cache source Parquets; refresh current-season files on every online build.
 
-    SCHEDULES_DIR.mkdir(parents=True, exist_ok=True)
-    SUMMARIES_DIR.mkdir(parents=True, exist_ok=True)
+    Historical missing team assets (404) are optional; network/schema failures
+    abort the build. Atomic replacement leaves existing caches intact on failure.
+    """
+    now = datetime.now(timezone.utc)
+    # January bowls belong to the prior season, not the new calendar year.
+    current = now.year if now.month >= 8 else now.year - 1
+    jobs = []
+    for directory, dataset, years in [
+        (SCHEDULES_DIR, "cfb_schedules", range(2001, current + 1)),
+        (SUMMARIES_DIR, "cfb_team_summaries_weekly", range(2004, current + 1)),
+        (TEAMS_DIR, "cfb_teams", range(2004, current + 1)),
+    ]:
+        directory.mkdir(parents=True, exist_ok=True)
+        tag = "espn_cfb_teams" if dataset == "cfb_teams" else dataset
+        for year in years:
+            name = f"{dataset}_{year}.parquet"
+            jobs.append((directory / name, f"{RELEASES}/{tag}/{name}", year, dataset))
 
-    def fetch(dest: Path, url: str) -> str:
-        if dest.exists() and dest.stat().st_size > 1000 and not force:
+    def fetch(dest, url, year, dataset):
+        if dest.exists() and not force and year < current:
             return f"skip {dest.name}"
-        urllib.request.urlretrieve(url, dest)
-        return f"ok   {dest.name} ({dest.stat().st_size / 1e6:.2f} MB)"
+        temp = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=dest.parent, suffix=".parquet", delete=False) as f:
+                temp = Path(f.name)
+                with urllib.request.urlopen(url, timeout=90) as response:
+                    while chunk := response.read(1024 * 1024):
+                        f.write(chunk)
+            raw = pd.read_parquet(temp)
+            required = {"season", "team_id"} if dataset == "cfb_teams" else (
+                {"season", "game_id"} if dataset == "cfb_schedules" else {"season", "team_id", "through_week"})
+            if not required.issubset(raw.columns) or raw.empty:
+                raise ValueError(f"Invalid {dataset} schema or empty dataset: {dest.name}")
+            os.replace(temp, dest)
+            dest.with_suffix(".source.json").write_text(json.dumps({
+                "url": url, "downloaded_at": datetime.now(timezone.utc).isoformat(),
+                "rows": len(raw), "columns": len(raw.columns),
+            }, indent=2) + "\n")
+            return f"ok   {dest.name} ({dest.stat().st_size / 1e6:.2f} MB)"
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404 and dataset == "cfb_teams" and year < current:
+                return f"unavailable {dest.name} (using schedule/summary conference data)"
+            raise
+        finally:
+            if temp is not None:
+                temp.unlink(missing_ok=True)
 
-    print(f"Downloading {len(jobs)} files into {DATA_DIR} ...")
+    print(f"Refreshing source datasets ({len(jobs)} files; historical caches reused) ...")
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futs = [pool.submit(fetch, dest, url) for dest, url in jobs]
-        for fut in as_completed(futs):
-            print(fut.result())
+        futures = [pool.submit(fetch, *job) for job in jobs]
+        for future in as_completed(futures):
+            print(future.result())
+
+
+def add_team_metadata(games: pd.DataFrame) -> pd.DataFrame:
+    """Fill conference names using team IDs AND season, respecting realignment."""
+    files = sorted(TEAMS_DIR.glob("cfb_teams_*.parquet"))
+    if not files:
+        print("No cached team metadata; using schedule/summary conferences")
+        return games
+    frames = []
+    for path in files:
+        raw = pd.read_parquet(path)
+        conference = "conference_name" if "conference_name" in raw else "conference"
+        if conference not in raw:
+            continue
+        frames.append(raw[["season", "team_id", conference]].rename(columns={conference: "_team_conference"}))
+    if not frames:
+        return games
+    teams = pd.concat(frames).drop_duplicates(["season", "team_id"], keep="last")
+    out = games.copy()
+    for side in ("home", "away"):
+        out = out.merge(teams.rename(columns={"team_id": f"{side}_id"}),
+                        on=["season", f"{side}_id"], how="left", validate="many_to_one")
+        col = f"{side}_conference"
+        out[col] = out[col].combine_first(out.pop("_team_conference"))
+    return out
 
 
 def normalize_schedule(raw: pd.DataFrame) -> pd.DataFrame:
@@ -98,7 +156,17 @@ def normalize_schedule(raw: pd.DataFrame) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Schedule missing columns: {missing}")
 
-    out = df[required].copy()
+    # Prefer the provider's explicit conference flag, then its legacy alias.
+    if "conference_game" in df:
+        df["conference_competition"] = df["conference_competition"].astype("boolean").fillna(df["conference_game"].astype("boolean"))
+    optional = ["home_rank", "away_rank", "home_conference", "away_conference"]
+    for col in optional:
+        if col not in df:
+            df[col] = pd.NA
+    out = df[required + optional].copy()
+    for col in ["home_rank", "away_rank"]:
+        value = pd.to_numeric(out[col], errors="coerce")
+        out[col] = value.where(value.between(1, 25))
 
     # Some canceled games have placeholder 0-0 scores and winner flags.
     # A valid result requires an explicitly final game status.
@@ -120,7 +188,7 @@ def normalize_schedule(raw: pd.DataFrame) -> pd.DataFrame:
     out["home_winner"] = out["home_winner"].astype(bool)
     out["away_winner"] = out["away_winner"].astype(bool)
     out["neutral_site"] = out["neutral_site"].fillna(0).astype(bool)
-    out["conference_competition"] = out["conference_competition"].fillna(0).astype(bool)
+    out["conference_competition"] = out["conference_competition"].astype("boolean")
     if out["status"].isna().any():
         out["status"] = out["status"].fillna("STATUS_FINAL")
 
@@ -187,6 +255,11 @@ def expand_to_team_rows(games: pd.DataFrame) -> pd.DataFrame:
     # Designated home team is not necessarily playing on its home field.
     home["is_home"] = ~games["neutral_site"].astype(bool)
 
+    home["rank"] = games["home_rank"]
+    home["opp_rank"] = games["away_rank"]
+    home["conference"] = games["home_conference"]
+    home["opp_conference"] = games["away_conference"]
+
     away = games[common].copy()
     away["team_id"] = games["away_id"]
     away["team"] = games["away_team"]
@@ -199,6 +272,10 @@ def expand_to_team_rows(games: pd.DataFrame) -> pd.DataFrame:
     away["won"] = games["away_winner"]
     away["is_home"] = False
 
+    away["rank"] = games["away_rank"]
+    away["opp_rank"] = games["home_rank"]
+    away["conference"] = games["away_conference"]
+    away["opp_conference"] = games["home_conference"]
     return pd.concat([home, away], ignore_index=True)
 
 
@@ -286,12 +363,18 @@ def add_weekly_summaries(df: pd.DataFrame, summaries: pd.DataFrame) -> pd.DataFr
 
     before_cols = set(base.columns)
 
+    # Schedule metadata is preferred; summary values only fill missing cells.
+    overlaps = (set(team_sum.columns) | set(opp_sum.columns)) & set(base.columns) - {"team_id", "opponent_id", "season", "_prior_week"}
+    saved = {col: base[col].copy() for col in overlaps}
+    base = base.drop(columns=list(overlaps))
     merged = base.merge(team_sum, on=["team_id", "season", "_prior_week"], how="left")
     merged = merged.merge(opp_sum, on=["opponent_id", "season", "_prior_week"], how="left")
     merged = merged.drop(columns=["_prior_week"])
+    for col, values in saved.items():
+        merged[col] = values.reset_index(drop=True).combine_first(merged[col])
 
     added = [c for c in merged.columns if c not in before_cols]
-    marker = "conference" if "conference" in merged.columns else (added[0] if added else None)
+    marker = "EPAplay_off" if "EPAplay_off" in merged.columns else (added[0] if added else None)
     team_hit = int(merged[marker].notna().sum()) if marker else 0
     print(
         f"Weekly summaries: attached {len(added)} columns; "
@@ -303,7 +386,7 @@ def add_weekly_summaries(df: pd.DataFrame, summaries: pd.DataFrame) -> pd.DataFr
 
 def build_team_games() -> pd.DataFrame:
     print("Loading schedules...")
-    games = load_all_schedules()
+    games = add_team_metadata(load_all_schedules())
     team_games = expand_to_team_rows(games)
     team_games = add_datetime_parts(team_games)
     team_games = add_prior_records(team_games)
@@ -311,6 +394,9 @@ def build_team_games() -> pd.DataFrame:
     print("Loading weekly summaries...")
     summaries = load_all_summaries()
     team_games = add_weekly_summaries(team_games, summaries)
+    for col in ["conference", "opp_conference"]:
+        team_games[col] = team_games[col].map(normalize_conference)
+    team_games = add_pregame_context(team_games)
 
     team_games = team_games.sort_values(
         ["game_datetime", "game_id", "is_home"],
@@ -363,13 +449,21 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Re-download even when local files already exist",
     )
+    parser.add_argument("--offline", action="store_true", help="Build only from cached source files; no downloads")
     args = parser.parse_args(argv)
-
-    if args.download or args.force_download:
+    if args.offline and (args.download or args.force_download):
+        parser.error("--offline cannot be combined with download flags")
+    if not args.offline:
         download_season_files(force=args.force_download)
 
     out = build_team_games()
-    out.to_parquet(OUTPUT_PATH, index=False)
+    with tempfile.NamedTemporaryFile(dir=OUTPUT_PATH.parent, suffix=".parquet", delete=False) as handle:
+        temporary = Path(handle.name)
+    try:
+        out.to_parquet(temporary, index=False)
+        os.replace(temporary, OUTPUT_PATH)
+    finally:
+        temporary.unlink(missing_ok=True)
     print(
         f"Wrote {len(out)} rows x {len(out.columns)} cols to {OUTPUT_PATH.name} "
         f"(seasons {int(out['season'].min())}-{int(out['season'].max())})"

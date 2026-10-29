@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from typing import Any, Mapping, Optional, Sequence
 
+import pandas as pd
+
 from discovery.engine.models import Condition, Discovery, Operator
 from discovery.sports.college_football.features import MONTH_NAMES
+from discovery.sports.college_football.context import CONTEXT_FEATURES
 
 
 SCOPE_LABELS = {
@@ -32,6 +35,17 @@ def condition_phrase(cond: Condition) -> str:
     feat = cond.feature
     op = cond.operator
     val = cond.value
+
+    base = feat.removeprefix("opp_")
+    prefix = "Opponent: " if feat.startswith("opp_") else ""
+    labels = {name: (kind, label) for name, kind, label in CONTEXT_FEATURES}
+    if base in labels and base != "conference":
+        kind, label = labels[base]
+        if kind == "boolean":
+            return prefix + (label if val else f"Not: {label.lower()}")
+        if kind == "categorical":
+            return f"{prefix}{label}: {val}"
+        return _numeric_phrase(prefix + label, op, val)
 
     if feat == "is_home":
         return "Home game" if val else "Road game"
@@ -248,6 +262,16 @@ def format_current_snapshot(
             f"  streak W{opponent_features.get('win_streak', '?')}/L{opponent_features.get('loss_streak', '?')}"
         ),
     ]
+    for subject, features in [(team, team_features), (opponent, opponent_features)]:
+        details = []
+        for key, label in [("rank", "poll rank"), ("conference", "conference"),
+                           ("rest_days", "full rest days"), ("previous_margin", "previous margin"),
+                           ("conference_wins", "conference wins"), ("conference_losses", "conference losses")]:
+            value = features.get(key)
+            if value is not None and not pd.isna(value):
+                details.append(f"{label}={value}")
+        if details:
+            lines.append(f"  {subject}: " + " | ".join(details))
     extras = []
     for label, key in (
         ("Off EPA/play", "EPAplay_off"),

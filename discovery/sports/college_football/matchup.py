@@ -13,7 +13,8 @@ from discovery.engine.models import Discovery, FeatureSpec, SearchStats
 from discovery.engine.search import DiscoveryEngine
 from discovery.engine.validation import apply_conditions, build_matching_games, recount_record
 from discovery.sports.college_football.dates import before_as_of_mask, parse_as_of, parse_game_dates
-from discovery.sports.college_football.schedule import resolve_scheduled_game
+from discovery.sports.college_football.schedule import resolve_scheduled_game, scheduled_context
+from discovery.sports.college_football.context import upcoming_context
 from discovery.sports.college_football.features import (
     LEAKAGE_COLUMNS,
     MONTH_NAMES,
@@ -332,6 +333,20 @@ def build_matchup_features(
             }:
                 continue
             opponent_feats[f"opp_{key}"] = value
+
+    if existing.empty:
+        metadata, opp_metadata, kickoff = scheduled_context(team_id, opponent_id, game_date)
+        season_value = metadata.get("season")
+        season = int(season_value) if pd.notna(season_value) else dt.year
+        context, opp_context = upcoming_context(
+            df, team_id=team_id, opponent_id=opponent_id, game_date=kickoff,
+            season=season, metadata=metadata, opponent_metadata=opp_metadata,
+        )
+        team_feats.update({**{k: v for k, v in metadata.items() if not k.startswith("_")}, **context})
+        opponent_feats.update({**{k: v for k, v in opp_metadata.items() if not k.startswith("_")}, **opp_context})
+        # Neutral-site designation never implies a home-field advantage.
+        if pd.notna(metadata.get("neutral_site")) and bool(metadata["neutral_site"]):
+            team_feats["is_home"] = opponent_feats["is_home"] = False
 
     # Apply explicit overrides to the selected team's feature vector (and mirrored keys)
     for key, value in overrides.items():

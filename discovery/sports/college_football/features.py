@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from discovery.engine.models import FeatureSpec
+from discovery.sports.college_football.context import CONTEXT_FEATURES
 from discovery.sports.college_football.dates import parse_game_dates
 
 # True postgame targets / identifiers — never searchable conditions.
@@ -104,6 +105,10 @@ def feature_specs() -> list[FeatureSpec]:
         FeatureSpec("win_diff", "numeric", "Win differential vs opponent", "win differential"),
         FeatureSpec("day_of_week", "categorical", "Day of week", "day of week"),
     ]
+
+    for name, kind, label in CONTEXT_FEATURES:
+        specs.append(FeatureSpec(name, kind, label, label.lower()))
+        specs.append(FeatureSpec(f"opp_{name}", kind, f"Opponent {label.lower()}", f"opponent {label.lower()}"))
 
     # Advanced efficiency metrics are useful for analysis, but overwhelm fan-facing
     # discoveries. Keep the definitions available for an explicit opt-in.
