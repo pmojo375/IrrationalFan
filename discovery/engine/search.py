@@ -471,6 +471,10 @@ def _evidence_diverse_top(
                     {"wins", "losses", "win_streak"},
                     {"opp_wins", "opp_losses", "opp_win_streak"},
                     {"is_home", "neutral_site", "venue"},
+                    {"previous_points_for", "previous_points_against", "previous_margin", "previous_won"},
+                    {"rest_days", "after_bye", "opp_rest_days", "opp_after_bye"},
+                    {"rank", "opp_rank"},
+                    {"conference", "opp_conference", "conference_wins", "conference_losses"},
                 ))
                 score += 2.0 * max(0, dimensions - 1)
                 if score > best_score:

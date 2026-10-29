@@ -243,6 +243,18 @@ def generate_atomic_conditions(
     # keeping a compact diverse set (equality + a few inequality strengths).
     pruned = _prune_atomic_redundancy(candidates)
     if len(pruned) > max_candidates:
+        # Give each available feature a turn before adding threshold variants.
+        # Otherwise appended context fields never reach the beam-search budget.
+        groups: dict[str, list[Condition]] = {}
+        for condition in pruned:
+            groups.setdefault(condition.feature, []).append(condition)
+        pruned = []
+        for offset in range(max(map(len, groups.values()))):
+            for group in groups.values():
+                if offset < len(group):
+                    pruned.append(group[offset])
+            if len(pruned) >= max_candidates:
+                break
         pruned = pruned[:max_candidates]
     return pruned
 

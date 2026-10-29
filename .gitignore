@@ -6,3 +6,6 @@
 __pycache__/
 *.py[cod]
 /cfb_team_games.parquet
+
+/data/teams/
+/data/**/*.source.json
