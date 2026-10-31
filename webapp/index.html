@@ -24,7 +24,7 @@ button:disabled{opacity:.5;cursor:wait}input,select{background:#0d192b;border:1p
 <button id="run" disabled>Find irrational evidence</button></div>
 <div id="status" role="status"></div><div id="error" role="alert"></div></section>
 <section id="results" hidden><h2>Discovery report</h2><pre id="report"></pre></section>
-</main><script>
+<section><h2>Cached predictions</h2><p>Stored in server memory until cleared, evicted, or restarted.</p><div class="controls"><button id="refresh-cache">Refresh list</button><button id="clear-cache">Clear cached predictions</button></div><div id="cache-status" role="status"></div><div id="cached-reports"></div></section></main><script>
 const $=id=>document.getElementById(id);
 let games=[],selected=null;
 function render(){
@@ -66,5 +66,33 @@ $("run").onclick=async()=>{
  }catch(e){$("error").textContent=e.message;$("status").textContent="";}
  finally{$("run").disabled=!selected;}
 };
-load();
+async function loadCache(){
+ const area=$("cached-reports");$("cache-status").textContent="Loading cached reports...";
+ try{
+  const r=await fetch("api/cache"),data=await r.json();
+  if(!r.ok)throw Error(data.detail||"Unable to load cache");
+  area.replaceChildren();$("cache-status").textContent=data.count+" of "+data.limit+" reports cached";
+  for(const item of data.reports){
+   const b=document.createElement("button");b.type="button";b.className="game";
+   b.textContent=item.team+" vs "+item.opponent+" ("+item.count+" discoveries)";
+   b.onclick=()=>{$("report").textContent=item.report;$("results").hidden=false;$("results").scrollIntoView({behavior:"smooth"});};
+   area.append(b);
+  }
+  if(!data.count)area.textContent="No cached predictions.";
+ }catch(e){$("cache-status").textContent=e.message;}
+}
+$("refresh-cache").onclick=loadCache;
+$("clear-cache").onclick=async()=>{
+ if(!confirm("Clear all cached predictions?"))return;
+ $("clear-cache").disabled=true;
+ try{
+  const r=await fetch("api/cache",{method:"DELETE"}),data=await r.json();
+  if(!r.ok)throw Error(data.detail||"Unable to clear cache");
+  await loadCache();$("cache-status").textContent=data.cleared+" cached reports cleared";
+ }catch(e){$("cache-status").textContent=e.message;}
+ finally{$("clear-cache").disabled=false;}
+};
+const runOriginal=$("run").onclick;
+$("run").onclick=async()=>{await runOriginal();await loadCache();};
+load();loadCache();
 </script></body></html>
