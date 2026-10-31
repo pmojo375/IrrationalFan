@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 import math
@@ -13,6 +14,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from discovery.config import EngineConfig
 from discovery.sports.college_football.dates import parse_game_dates
 from discovery.sports.college_football.matchup import discover
 from discovery.sports.college_football.schedule import SCHEDULE_DIR
@@ -34,6 +36,26 @@ class MatchupRequest(BaseModel):
     min_sample_size: int = Field(default=3, ge=3, le=30)
     max_conditions: int = Field(default=4, ge=1, le=8)
     discovery_mode: str = Field(default="entertaining", pattern="^(entertaining|balanced|evidence)$")
+
+
+def _discovery_config(mode: str) -> EngineConfig:
+    """Different search objectives, not just a re-sort of the same results."""
+    cfg = EngineConfig()
+    if mode == "balanced":
+        cfg.ranking = replace(
+            cfg.ranking, win_pct=30.0, sample_size=30.0, streak=12.0,
+            rarity=5.0, n_conditions=3.0, perfect_record_bonus=5.0,
+            tiny_sample_penalty=24.0, tiny_sample_threshold=7,
+        )
+        cfg.search = replace(cfg.search, beam_width=55, min_success_rate=0.60)
+    elif mode == "evidence":
+        cfg.ranking = replace(
+            cfg.ranking, win_pct=22.0, sample_size=50.0, streak=5.0,
+            rarity=0.0, n_conditions=0.0, perfect_record_bonus=2.0,
+            tiny_sample_penalty=35.0, tiny_sample_threshold=10,
+        )
+        cfg.search = replace(cfg.search, beam_width=65, min_success_rate=0.65)
+    return cfg
 
 
 def _schedule_files(now: datetime) -> list[Path]:
@@ -157,16 +179,13 @@ async def run_discovery(request: MatchupRequest):
                 discover, team=team, opponent=opponent, game_date=game["date"],
                 home=selected_home, print_report=False,
                 min_sample_size=request.min_sample_size, max_conditions=request.max_conditions,
+                config=_discovery_config(request.discovery_mode),
             )
         except FileNotFoundError as exc:
             raise HTTPException(503, "Processed data unavailable; run python process.py") from exc
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         discoveries = [_serialize_discovery(d) for d in result.discoveries]
-        if request.discovery_mode == "balanced":
-            discoveries.sort(key=lambda d: (d["ranking_score"] + 2 * math.log1p(d["n_games"]) - 2 * len(d["conditions"])), reverse=True)
-        elif request.discovery_mode == "evidence":
-            discoveries.sort(key=lambda d: (d["n_games"], -len(d["conditions"]), d["ranking_score"]), reverse=True)
         response = {"game": game, "team": result.team, "opponent": result.opponent,
                     "discoveries": discoveries, "settings": request.model_dump(),
                     "report": result.report, "count": len(result.discoveries)}
