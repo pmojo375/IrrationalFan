@@ -55,14 +55,14 @@ def _read_games(now: datetime) -> list[dict]:
     rows = []
     for i, row in raw.iterrows():
         dt = dates.loc[i]
-        if pd.isna(dt) or dt.date() <= today:
+        if pd.isna(dt) or dt.date() < today:
             continue
         status = str(row.get("status", "")).upper()
-        if any(word in status for word in ("FINAL", "IN_PROGRESS", "CANCEL", "POSTPON")):
+        if any(word in status for word in ("FINAL", "CANCEL", "POSTPON")):
             continue
         score_home = row.get("home_score", row.get("home_points"))
         score_away = row.get("away_score", row.get("away_points"))
-        if pd.notna(score_home) and pd.notna(score_away):
+        if pd.notna(score_home) and pd.notna(score_away) and "IN_PROGRESS" not in status:
             continue
         rows.append({
             "game_id": str(row["game_id"]),
