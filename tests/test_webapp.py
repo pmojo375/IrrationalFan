@@ -23,6 +23,7 @@ def test_schedule_and_discovery(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "discover", lambda **kwargs: SimpleNamespace(
         team=kwargs["team"], opponent=kwargs["opponent"],
         report="A ridiculous but true statistic", discoveries=[1]))
+    module._REPORT_CACHE.clear()
     client = TestClient(module.app)
     response = client.get("/api/games?mode=week")
     assert response.status_code == 200
@@ -31,6 +32,9 @@ def test_schedule_and_discovery(monkeypatch, tmp_path):
     assert report.status_code == 200
     assert report.json()["team"] == "Minnesota"
     assert report.json()["count"] == 1
+    monkeypatch.setattr(module, "discover", lambda **kwargs: (_ for _ in ()).throw(
+        AssertionError("cached matchup was recomputed")))
+    assert client.post("/api/discover", json={"game_id": "123", "team_id": 2}).status_code == 200
     assert client.post("/api/discover", json={"game_id": "123", "team_id": 99}).status_code == 422
     assert client.post("/api/discover", json={"game_id": "not-real"}).status_code == 404
 
@@ -39,3 +43,25 @@ def test_home_page():
     response = TestClient(module.app).get("/")
     assert response.status_code == 200
     assert "Irrational Fan" in response.text
+
+
+def test_busy_discovery_returns_429(monkeypatch):
+    import asyncio
+    from httpx import ASGITransport, AsyncClient
+
+    monkeypatch.setattr(module, "_read_games", lambda now: [{
+        "game_id": "busy-test", "home_id": 1, "away_id": 2,
+        "home_team": "A", "away_team": "B", "date": "2026-11-07",
+    }])
+    module._REPORT_CACHE.clear()
+
+    async def run():
+        await module._DISCOVERY_LOCK.acquire()
+        try:
+            async with AsyncClient(transport=ASGITransport(app=module.app), base_url="http://test") as client:
+                response = await client.post("/api/discover", json={"game_id": "busy-test"})
+                assert response.status_code == 429
+        finally:
+            module._DISCOVERY_LOCK.release()
+
+    asyncio.run(run())
