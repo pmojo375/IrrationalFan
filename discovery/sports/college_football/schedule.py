@@ -29,8 +29,8 @@ def resolve_scheduled_game(
         raise ValueError(f"Invalid matchup date: {date!r}")
     requested_day = requested.date()
     today = (now or datetime.now(EASTERN)).astimezone(EASTERN).date()
-    if requested_day <= today:
-        raise ValueError(f"Discovery requires a future game date (after {today}).")
+    if requested_day < today:
+        raise ValueError(f"Discovery requires a game date on or after {today}.")
 
     directory = Path(schedule_dir) if schedule_dir is not None else SCHEDULE_DIR
     source = directory / f"cfb_schedules_{requested_day.year}.parquet"
@@ -50,12 +50,12 @@ def resolve_scheduled_game(
         raise ValueError(f"Expected exactly one scheduled game between team IDs {team_id} and {opponent_id} on {requested_day}; found {len(matches)}.")
     row = matches.iloc[0]
     if "home_score" in matches.columns and "away_score" in matches.columns:
-        if pd.notna(row["home_score"]) and pd.notna(row["away_score"]):
+        if pd.notna(row["home_score"]) and pd.notna(row["away_score"]) and "IN_PROGRESS" not in str(row.get("status", "")).upper():
             raise ValueError("The scheduled game already has a final score.")
     if "home_points" in matches.columns and "away_points" in matches.columns:
-        if pd.notna(row["home_points"]) and pd.notna(row["away_points"]):
+        if pd.notna(row["home_points"]) and pd.notna(row["away_points"]) and "IN_PROGRESS" not in str(row.get("status", "")).upper():
             raise ValueError("The scheduled game already has a final score.")
-    if "status" in matches.columns and str(row["status"]).upper() in {"STATUS_FINAL", "FINAL", "STATUS_IN_PROGRESS", "IN_PROGRESS"}:
+    if "status" in matches.columns and str(row["status"]).upper() in {"STATUS_FINAL", "FINAL"}:
         raise ValueError("The scheduled game is not upcoming.")
     actual_home = bool(row["home_id"] == team_id)
     if home is not None and bool(home) != actual_home:
