@@ -3,7 +3,7 @@
 <title>Irrational Fan</title>
 <style>
 :root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0b1220;color:#edf2fa}
-*{box-sizing:border-box}body{margin:0}main{max-width:920px;margin:auto;padding:32px 18px 80px}
+*{box-sizing:border-box}body{margin:0}main{max-width:1100px;margin:auto;padding:32px 18px 80px}
 h1{font-size:clamp(2rem,6vw,3.4rem);margin-bottom:4px}p{color:#aebbd0}
 section{background:#152237;border:1px solid #2b3c56;border-radius:16px;padding:20px;margin-top:24px}
 .controls{display:flex;gap:10px;flex-wrap:wrap;margin:16px 0}
@@ -14,19 +14,21 @@ button:disabled{opacity:.5;cursor:wait}input,select{background:#0d192b;border:1p
 .game[aria-pressed=true]{border-color:#a6e05e;background:#23382d}
 .game small{color:#aebbd0;display:block;margin-top:5px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.65 ui-monospace,monospace;background:#0d192b;padding:18px;border-radius:10px}
 #error{color:#ffb5b5}#status{color:#c7d7ec}
+
+.hero{padding:16px 0 5px}.eyebrow{text-transform:uppercase;letter-spacing:.14em;color:#a6e05e;font-size:.75rem;font-weight:800}.layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,.8fr);gap:18px;align-items:start}.layout section{margin-top:14px}.game{width:100%;cursor:pointer}.game:hover,.discovery:hover{border-color:#a6e05e}.muted{color:#aebbd0}.discovery{background:#0d192b;border:1px solid #34465f;border-radius:12px;padding:16px;margin:12px 0}.discovery h3{margin:6px 0;font-size:1.1rem}.record{font-size:2rem;font-weight:850;color:#a6e05e}.tags{display:flex;gap:7px;flex-wrap:wrap}.tag{border:1px solid #46546b;border-radius:99px;padding:3px 9px;font-size:.8rem;color:#d4e0f1}.discovery details{margin-top:12px}.discovery summary{cursor:pointer;color:#a6e05e}.evidence{width:100%;border-collapse:collapse;margin-top:12px;font-size:.85rem}.evidence th,.evidence td{padding:8px;border-bottom:1px solid #34465f;text-align:left}.evidence-wrap{overflow-x:auto}.settings{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.settings label{display:grid;gap:5px}.settings select,.settings input{width:100%}#report{max-height:400px;overflow:auto}#results[hidden],#raw-details[hidden]{display:none}@media(max-width:740px){.layout{grid-template-columns:1fr}.settings{grid-template-columns:1fr}main{padding:20px 12px 60px}section{padding:16px}}
 </style></head><body><main>
-<h1>Irrational Fan</h1><p>Technically true. Statistically ridiculous.</p>
-<section><h2>Choose a matchup</h2>
+<div class="hero"><div class="eyebrow">College football discovery explorer</div><h1>Irrational Fan</h1></div><p>Technically true. Statistically ridiculous.</p>
+<div class="layout"><section><h2>Choose a matchup</h2>
 <div class="controls"><select id="mode" aria-label="Schedule range"><option value="week">Next scheduled week</option><option value="future">All future games</option></select>
 <input id="search" placeholder="Filter by team" aria-label="Filter by team"></div>
 <div id="games" aria-live="polite"></div>
-<div class="controls"><label for="side">Make the case for</label><select id="side" aria-label="Selected team"></select>
+<h3>Discovery settings</h3><div class="settings"><label>Discovery style<select id="discovery-mode"><option value="entertaining">Entertaining</option><option value="balanced">Balanced</option><option value="evidence">Evidence-focused</option></select></label><label>Minimum matching games<input id="min-games" type="number" min="3" max="30" value="3"></label><label>Maximum conditions<input id="max-conditions" type="number" min="1" max="8" value="4"></label></div><div class="controls"><label for="side">Make the case for</label><select id="side" aria-label="Selected team"></select>
 <button id="run" disabled>Find irrational evidence</button></div>
 <div id="status" role="status"></div><div id="error" role="alert"></div></section>
-<section id="results" hidden><h2>Discovery report</h2><pre id="report"></pre></section>
+<section id="results" hidden><h2 id="results-title">Discoveries</h2><p id="results-subtitle"></p><div class="controls"><label for="sort">Sort by</label><select id="sort"><option value="ranking">Recommended</option><option value="sample">Most matching games</option><option value="record">Best record</option><option value="unusual">Most conditions</option></select></div><div id="discovery-list"></div><details id="raw-details"><summary>Original text report</summary><pre id="report"></pre></details></section></div>
 <section><h2>Cached predictions</h2><p>Stored in server memory until cleared, evicted, or restarted.</p><div class="controls"><button id="refresh-cache">Refresh list</button><button id="clear-cache">Clear cached predictions</button></div><div id="cache-status" role="status"></div><div id="cached-reports"></div></section></main><script>
 const $=id=>document.getElementById(id);
-let games=[],selected=null;
+let games=[],selected=null,currentResult=null;
 function render(){
  const q=$("search").value.trim().toLowerCase(),list=games.filter(g=>(g.home_team+" "+g.away_team).toLowerCase().includes(q));
  $("games").replaceChildren();
@@ -59,9 +61,9 @@ $("mode").onchange=load;$("search").oninput=render;
 $("run").onclick=async()=>{
  $("run").disabled=true;$("error").textContent="";$("status").textContent="Searching historical games...";
  try{
-  const r=await fetch("api/discover",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({game_id:selected,team_id:Number($("side").value)})});
+  const r=await fetch("api/discover",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({game_id:selected,team_id:Number($("side").value),discovery_mode:$("discovery-mode").value,min_sample_size:Number($("min-games").value),max_conditions:Number($("max-conditions").value)})});
   const data=await r.json();if(!r.ok)throw Error(data.detail||"Discovery failed");
-  $("report").textContent=data.report;$("results").hidden=false;$("results").scrollIntoView({behavior:"smooth"});
+  showResults(data);
   $("status").textContent=data.count+" discoveries";
  }catch(e){$("error").textContent=e.message;$("status").textContent="";}
  finally{$("run").disabled=!selected;}
@@ -75,7 +77,7 @@ async function loadCache(){
   for(const item of data.reports){
    const b=document.createElement("button");b.type="button";b.className="game";
    b.textContent=item.team+" vs "+item.opponent+" ("+item.count+" discoveries)";
-   b.onclick=()=>{$("report").textContent=item.report;$("results").hidden=false;$("results").scrollIntoView({behavior:"smooth"});};
+   b.onclick=()=>{showResults(item);};
    area.append(b);
   }
   if(!data.count)area.textContent="No cached predictions.";
@@ -94,5 +96,10 @@ $("clear-cache").onclick=async()=>{
 };
 const runOriginal=$("run").onclick;
 $("run").onclick=async()=>{await runOriginal();await loadCache();};
+$("sort").onchange=renderDiscoveries;
 load();loadCache();
+
+function showResults(data){currentResult=data;$("report").textContent=data.report||"";$("results-title").textContent="The case for "+data.team;$("results-subtitle").textContent=(data.count||0)+" discoveries against "+data.opponent+". Historical patterns are not probabilities of winning.";$("results").hidden=false;renderDiscoveries();$("results").scrollIntoView({behavior:"smooth"});}
+function node(tag,cls,text){const el=document.createElement(tag);if(cls)el.className=cls;if(text!==undefined)el.textContent=String(text);return el;}
+function renderDiscoveries(){const area=$("discovery-list");area.replaceChildren();if(!currentResult)return;const ds=[...(currentResult.discoveries||[])];const sort=$("sort").value;ds.sort((a,b)=>sort==="sample"?b.n_games-a.n_games:sort==="record"?b.win_pct-a.win_pct:sort==="unusual"?b.conditions.length-a.conditions.length:b.ranking_score-a.ranking_score);if(!ds.length){area.append(node("p","muted","No structured discoveries available for this report. See the original text report below."));return;}ds.forEach((d,i)=>{const card=node("article","discovery");const label=node("div","eyebrow",i===0?"Featured discovery":"Discovery "+(i+1));card.append(label,node("div","record",d.record),node("h3","",d.description||"Historical pattern"));const tags=node("div","tags");[d.n_games+" matching games",Math.round((d.win_pct||0)*100)+"% historical",d.conditions.length+" conditions",d.scope+" history"].forEach(t=>tags.append(node("span","tag",t)));card.append(tags);const detail=node("details");detail.append(node("summary","","See conditions and historical evidence"));const cond=node("ul");(d.conditions||[]).forEach(c=>cond.append(node("li","",c)));detail.append(cond);const wrap=node("div","evidence-wrap"),table=node("table","evidence"),head=node("tr");["Season","Team","Opponent","Score","Result"].forEach(h=>head.append(node("th","",h)));table.append(head);(d.matching_games||[]).forEach(g=>{const tr=node("tr");[g.season,g.team,g.opponent,(g.team_score??"?")+" - "+(g.opponent_score??"?"),g.won?"Win":"Loss"].forEach(v=>tr.append(node("td","",v)));table.append(tr)});wrap.append(table);detail.append(wrap);card.append(detail);area.append(card)});}
 </script></body></html>
