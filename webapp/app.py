@@ -105,6 +105,21 @@ def games(mode: str = Query("week", pattern="^(week|future)$"),
     return {"games": all_games, "mode": mode, "as_of": now.isoformat()}
 
 
+@app.get("/api/cache")
+def cached_reports():
+    return {"reports": [{"game_id": game_id, "team_id": team_id, **report}
+            for (game_id, team_id), report in reversed(list(_REPORT_CACHE.items()))],
+            "count": len(_REPORT_CACHE), "limit": _CACHE_LIMIT}
+
+
+@app.delete("/api/cache")
+async def clear_cached_reports():
+    async with _DISCOVERY_LOCK:
+        cleared = len(_REPORT_CACHE)
+        _REPORT_CACHE.clear()
+    return {"cleared": cleared}
+
+
 @app.post("/api/discover")
 async def run_discovery(request: MatchupRequest):
     try:
