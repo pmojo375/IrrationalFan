@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 import pandas as pd
 
 from webapp import app as module
+from discovery.engine.models import Discovery, Condition, Operator, MatchingGame
 
 
 def test_schedule_and_discovery(monkeypatch, tmp_path):
@@ -22,7 +23,12 @@ def test_schedule_and_discovery(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "_schedule_files", lambda now: [schedule])
     monkeypatch.setattr(module, "discover", lambda **kwargs: SimpleNamespace(
         team=kwargs["team"], opponent=kwargs["opponent"],
-        report="A ridiculous but true statistic", discoveries=[1]))
+        report="A ridiculous but true statistic", discoveries=[Discovery(
+            scope="team", conditions=(Condition("week", Operator.EQ, 10),),
+            wins=1, losses=0, n_games=1, win_pct=1.0, streak=1,
+            ranking_score=10.0, description="One historical win",
+            matching_games=[MatchingGame(2025, "2025-11-01", "Minnesota", "Iowa", 21, 14, True)],
+        )]))
     module._REPORT_CACHE.clear()
     client = TestClient(module.app)
     response = client.get("/api/games?mode=week")
@@ -32,6 +38,8 @@ def test_schedule_and_discovery(monkeypatch, tmp_path):
     assert report.status_code == 200
     assert report.json()["team"] == "Minnesota"
     assert report.json()["count"] == 1
+    assert report.json()["discoveries"][0]["scope"] == "team"
+    assert report.json()["discoveries"][0]["matching_games"][0]["opponent"] == "Iowa"
     monkeypatch.setattr(module, "discover", lambda **kwargs: (_ for _ in ()).throw(
         AssertionError("cached matchup was recomputed")))
     assert client.post("/api/discover", json={"game_id": "123", "team_id": 2}).status_code == 200
