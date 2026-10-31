@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -18,6 +19,12 @@ from discovery.sports.college_football.schedule import SCHEDULE_DIR
 EASTERN = ZoneInfo("America/New_York")
 PAGE = Path(__file__).with_name("index.html")
 app = FastAPI(title="Irrational Fan", version="0.1.0")
+
+# Keep Uvicorn at one worker so this guard covers every request.
+_DISCOVERY_LOCK = asyncio.Lock()
+_REPORT_CACHE: OrderedDict[tuple[str, int], dict] = OrderedDict()
+_CACHE_LIMIT = 32
+
 
 
 class MatchupRequest(BaseModel):
@@ -113,14 +120,31 @@ async def run_discovery(request: MatchupRequest):
     selected_home = request.team_id is None or request.team_id == game["home_id"]
     team = game["home_team"] if selected_home else game["away_team"]
     opponent = game["away_team"] if selected_home else game["home_team"]
-    try:
-        result = await asyncio.to_thread(
-            discover, team=team, opponent=opponent, game_date=game["date"],
-            home=selected_home, print_report=False,
-        )
-    except FileNotFoundError as exc:
-        raise HTTPException(503, "Processed data unavailable; run python process.py") from exc
-    except ValueError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    return {"game": game, "team": result.team, "opponent": result.opponent,
-            "report": result.report, "count": len(result.discoveries)}
+    cache_key = (game["game_id"], int(game["home_id"] if selected_home else game["away_id"]))
+    cached = _REPORT_CACHE.get(cache_key)
+    if cached is not None:
+        _REPORT_CACHE.move_to_end(cache_key)
+        return cached
+
+    if _DISCOVERY_LOCK.locked():
+        raise HTTPException(429, "Another matchup is being analyzed. Please retry shortly.")
+    async with _DISCOVERY_LOCK:
+        cached = _REPORT_CACHE.get(cache_key)
+        if cached is not None:
+            _REPORT_CACHE.move_to_end(cache_key)
+            return cached
+        try:
+            result = await asyncio.to_thread(
+                discover, team=team, opponent=opponent, game_date=game["date"],
+                home=selected_home, print_report=False,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(503, "Processed data unavailable; run python process.py") from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        response = {"game": game, "team": result.team, "opponent": result.opponent,
+                    "report": result.report, "count": len(result.discoveries)}
+        _REPORT_CACHE[cache_key] = response
+        if len(_REPORT_CACHE) > _CACHE_LIMIT:
+            _REPORT_CACHE.popitem(last=False)
+        return response
