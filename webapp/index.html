@@ -15,31 +15,37 @@ button:disabled{opacity:.5;cursor:wait}input,select{background:#0d192b;border:1p
 .game small{color:#aebbd0;display:block;margin-top:5px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.65 ui-monospace,monospace;background:#0d192b;padding:18px;border-radius:10px}
 #error{color:#ffb5b5}#status{color:#c7d7ec}
 
-.hero{padding:16px 0 5px}.eyebrow{text-transform:uppercase;letter-spacing:.14em;color:#a6e05e;font-size:.75rem;font-weight:800}.layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,.8fr);gap:18px;align-items:start}.layout section{margin-top:14px}.game{width:100%;cursor:pointer}.game:hover,.discovery:hover{border-color:#a6e05e}.muted{color:#aebbd0}.discovery{background:#0d192b;border:1px solid #34465f;border-radius:12px;padding:16px;margin:12px 0}.discovery h3{margin:6px 0;font-size:1.1rem}.record{font-size:2rem;font-weight:850;color:#a6e05e}.tags{display:flex;gap:7px;flex-wrap:wrap}.tag{border:1px solid #46546b;border-radius:99px;padding:3px 9px;font-size:.8rem;color:#d4e0f1}.discovery details{margin-top:12px}.discovery summary{cursor:pointer;color:#a6e05e}.evidence{width:100%;border-collapse:collapse;margin-top:12px;font-size:.85rem}.evidence th,.evidence td{padding:8px;border-bottom:1px solid #34465f;text-align:left}.evidence-wrap{overflow-x:auto}.settings{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.settings label{display:grid;gap:5px}.settings select,.settings input{width:100%}#report{max-height:400px;overflow:auto}#results[hidden],#raw-details[hidden]{display:none}@media(max-width:740px){.layout{grid-template-columns:1fr}.settings{grid-template-columns:1fr}main{padding:20px 12px 60px}section{padding:16px}}
+.hero{padding:16px 0 5px}.eyebrow{text-transform:uppercase;letter-spacing:.14em;color:#a6e05e;font-size:.75rem;font-weight:800}.layout{display:grid;grid-template-columns:minmax(270px,.7fr) minmax(0,1.3fr);gap:18px;align-items:start}.layout section{margin-top:14px}.game{width:100%;cursor:pointer}.game:hover,.discovery:hover{border-color:#a6e05e}.muted{color:#aebbd0}.discovery{background:#0d192b;border:1px solid #34465f;border-radius:12px;padding:16px;margin:12px 0}.discovery h3{margin:6px 0;font-size:1.1rem}.record{font-size:2rem;font-weight:850;color:#a6e05e}.tags{display:flex;gap:7px;flex-wrap:wrap}.tag{border:1px solid #46546b;border-radius:99px;padding:3px 9px;font-size:.8rem;color:#d4e0f1}.discovery details{margin-top:12px}.discovery summary{cursor:pointer;color:#a6e05e}.evidence{width:100%;border-collapse:collapse;margin-top:12px;font-size:.85rem}.evidence th,.evidence td{padding:8px;border-bottom:1px solid #34465f;text-align:left}.evidence-wrap{overflow-x:auto}.settings{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.settings label{display:grid;gap:5px}.settings select,.settings input{width:100%}.selected-line{padding:10px 0;color:#aebbd0;font-size:.9rem}.selected-line strong{color:#edf2fa}#game-picker{border:1px solid #34465f;border-radius:10px;padding:12px;margin:12px 0}#game-picker>summary,.advanced>summary,.cache-panel>summary{cursor:pointer;font-weight:700;color:#a6e05e}#game-count{float:right;color:#aebbd0;font-weight:400;font-size:.85rem}#games{margin:12px 0;max-height:360px;overflow-y:auto}.secondary{background:#263b4b;color:#edf2fa;width:100%}.advanced{margin:16px 0}.advanced .settings{margin-top:14px}.cache-panel{background:#152237;border:1px solid #2b3c56;border-radius:16px;padding:20px;margin-top:20px}#results{min-width:0}#report{max-height:400px;overflow:auto}#results[hidden],#raw-details[hidden]{display:none}@media(min-width:741px){.layout>section:first-child{position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto}}@media(max-width:740px){.layout{grid-template-columns:1fr}.settings{grid-template-columns:1fr}main{padding:20px 12px 60px}section{padding:16px}}
 </style></head><body><main>
 <div class="hero"><div class="eyebrow">College football discovery explorer</div><h1>Irrational Fan</h1></div><p>Technically true. Statistically ridiculous.</p>
 <div class="layout"><section><h2>Choose a matchup</h2>
 <div class="controls"><select id="mode" aria-label="Schedule range"><option value="week">Next scheduled week</option><option value="future">All future games</option></select>
 <input id="search" placeholder="Filter by team" aria-label="Filter by team"></div>
-<div id="games" aria-live="polite"></div>
-<h3>Discovery settings</h3><div class="settings"><label>Discovery style<select id="discovery-mode"><option value="entertaining">Entertaining</option><option value="balanced">Balanced</option><option value="evidence">Evidence-focused</option></select></label><label>Minimum matching games<input id="min-games" type="number" min="3" max="30" value="3"></label><label>Maximum conditions<input id="max-conditions" type="number" min="1" max="8" value="4"></label></div><div class="controls"><label for="side">Make the case for</label><select id="side" aria-label="Selected team"></select>
+<div class="selected-line">Selected: <strong id="selected-game">Loading...</strong></div><details id="game-picker" open><summary>Browse matchups <span id="game-count"></span></summary><div id="games" aria-live="polite"></div><button type="button" id="more-games" class="secondary" hidden>Show all games</button></details>
+<details class="advanced"><summary>Advanced discovery settings</summary><div class="settings"><label>Discovery style<select id="discovery-mode"><option value="entertaining">Entertaining</option><option value="balanced">Balanced</option><option value="evidence">Evidence-focused</option></select></label><label>Minimum matching games<input id="min-games" type="number" min="3" max="30" value="3"></label><label>Maximum conditions<input id="max-conditions" type="number" min="1" max="8" value="4"></label></div></details><div class="controls"><label for="side">Make the case for</label><select id="side" aria-label="Selected team"></select>
 <button id="run" disabled>Find irrational evidence</button></div>
 <div id="status" role="status"></div><div id="error" role="alert"></div></section>
 <section id="results" hidden><h2 id="results-title">Discoveries</h2><p id="results-subtitle"></p><div class="controls"><label for="sort">Sort by</label><select id="sort"><option value="ranking">Recommended</option><option value="sample">Most matching games</option><option value="record">Best record</option><option value="unusual">Most conditions</option></select></div><div id="discovery-list"></div><details id="raw-details"><summary>Original text report</summary><pre id="report"></pre></details></section></div>
-<section><h2>Cached predictions</h2><p>Stored in server memory until cleared, evicted, or restarted.</p><div class="controls"><button id="refresh-cache">Refresh list</button><button id="clear-cache">Clear cached predictions</button></div><div id="cache-status" role="status"></div><div id="cached-reports"></div></section></main><script>
+<details class="cache-panel"><summary>Cached predictions</summary><p>Stored in server memory until cleared, evicted, or restarted.</p><div class="controls"><button id="refresh-cache">Refresh list</button><button id="clear-cache">Clear cached predictions</button></div><div id="cache-status" role="status"></div><div id="cached-reports"></div></details></main><script>
 const $=id=>document.getElementById(id);
-let games=[],selected=null,currentResult=null;
+let games=[],selected=null,currentResult=null,showAllGames=false;
 function render(){
  const q=$("search").value.trim().toLowerCase(),list=games.filter(g=>(g.home_team+" "+g.away_team).toLowerCase().includes(q));
  $("games").replaceChildren();
+ const active=games.find(g=>g.game_id===selected);
+ $("selected-game").textContent=active?active.away_team+" at "+active.home_team:"No game selected";
+ $("game-count").textContent=list.length+" games";
  if(!list.length){$("games").textContent="No upcoming games found.";return;}
- for(const g of list){
+ const visible=q||showAllGames?list:list.slice(0,6);
+ for(const g of visible){
   const b=document.createElement("button");b.className="game";b.type="button";
   b.setAttribute("aria-pressed",String(g.game_id===selected));
   const left=document.createElement("span");left.textContent=g.away_team+" at "+g.home_team;
   const detail=document.createElement("small");detail.textContent=new Date(g.kickoff).toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"})+" · Week "+g.week;
-  left.append(detail);b.append(left);b.onclick=()=>{selected=g.game_id;render();updateSide();};$("games").append(b);
+  left.append(detail);b.append(left);b.onclick=()=>{selected=g.game_id;showAllGames=false;render();updateSide();if(window.matchMedia("(max-width:740px)").matches)$("game-picker").open=false;};$("games").append(b);
  }
+ $("more-games").hidden=!!q||list.length<=6;
+ $("more-games").textContent=showAllGames?"Show fewer games":"Show all "+list.length+" games";
 }
 function updateSide(){
  const g=games.find(x=>x.game_id===selected);$("side").replaceChildren();$("run").disabled=!g;
@@ -53,11 +59,11 @@ async function load(){
  try{
   const r=await fetch("api/games?mode="+encodeURIComponent($("mode").value));
   const data=await r.json();if(!r.ok)throw Error(data.detail||"Unable to load games");
-  games=data.games;selected=games.some(g=>g.game_id===selected)?selected:(games[0]?.game_id??null);
+  games=data.games;showAllGames=false;selected=games.some(g=>g.game_id===selected)?selected:(games[0]?.game_id??null);
   render();updateSide();$("status").textContent=games.length+" scheduled games";
  }catch(e){games=[];selected=null;render();updateSide();$("status").textContent="";$("error").textContent=e.message;}
 }
-$("mode").onchange=load;$("search").oninput=render;
+$("mode").onchange=load;$("search").oninput=render;$("more-games").onclick=()=>{showAllGames=!showAllGames;render();};
 $("run").onclick=async()=>{
  $("run").disabled=true;$("error").textContent="";$("status").textContent="Searching historical games...";
  try{
