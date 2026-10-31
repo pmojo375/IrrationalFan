@@ -2,8 +2,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
-from functools import lru_cache
+from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -39,7 +38,7 @@ def _read_games(now: datetime) -> list[dict]:
             frames.append(pd.read_parquet(path))
     if not frames:
         raise FileNotFoundError("No cached schedules found. Run python process.py first.")
-    raw = pd.concat(frames, ignore_index=True).drop_duplicates("game_id", keep="last")
+    raw = pd.concat(frames, ignore_index=True).drop_duplicates("game_id", keep="last").reset_index(drop=True)
     date_col = "game_date" if "game_date" in raw else "start_date"
     required = {"game_id", "home_id", "away_id", "home_team", "away_team", "week", "season", date_col}
     if not required.issubset(raw.columns):
