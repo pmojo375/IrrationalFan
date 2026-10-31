@@ -86,3 +86,33 @@ If there is an unplayed scheduled game before the requested matchup, its score
 and outcome remain unknown: previous-game result features are withheld, rest is
 calculated from its scheduled date, and conference totals are withheld if that
 pending game can change them. Thus looking two weeks ahead does not invent a bye.
+
+## Web interface (FastAPI)
+
+Install the optional web dependencies and generate the processed data:
+
+```bash
+python -m pip install -r requirements-web.txt
+python process.py
+uvicorn webapp.app:app --host 127.0.0.1 --port 8001
+```
+
+Open http://127.0.0.1:8001/ locally. The page lists the earliest upcoming
+scheduled season/week, with a separate selector for all future scheduled games.
+Choose a matchup and the team whose case to argue; the server calls the same
+`discover()` engine as the CLI and displays its full text report.
+
+Endpoints: `GET /api/games?mode=week|future&team=...`,
+`POST /api/discover` with `{"game_id":"123","team_id":456}`,
+and `GET /health`. The game ID is checked against the cached schedule; callers
+cannot invent opponents or override the venue. Game dates are Eastern-local.
+Only games strictly after the current Eastern date are eligible, matching the
+existing engine's future-date validation. Today's games are intentionally excluded.
+
+This app reads cached source files; it does **not** refresh schedules on web
+requests. Run `python process.py` periodically (for example daily) as a separate
+job. Keep the Uvicorn listener on localhost behind Nginx, and apply rate limiting
+to the potentially CPU-heavy discovery endpoint before public deployment.
+When proxying at a subdomain, route the entire hostname to port 8001. Run
+`python -m pytest tests/test_webapp.py -q` to check the web interface.
+

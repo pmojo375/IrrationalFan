@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Irrational Fan</title>
+<style>
+:root{color-scheme:dark;font-family:system-ui,sans-serif;background:#0b1220;color:#edf2fa}
+*{box-sizing:border-box}body{margin:0}main{max-width:920px;margin:auto;padding:32px 18px 80px}
+h1{font-size:clamp(2rem,6vw,3.4rem);margin-bottom:4px}p{color:#aebbd0}
+section{background:#152237;border:1px solid #2b3c56;border-radius:16px;padding:20px;margin-top:24px}
+.controls{display:flex;gap:10px;flex-wrap:wrap;margin:16px 0}
+button,input,select{font:inherit;border-radius:9px;padding:11px 13px}
+button{background:#a6e05e;color:#101b0b;border:0;font-weight:700;cursor:pointer}
+button:disabled{opacity:.5;cursor:wait}input,select{background:#0d192b;border:1px solid #46546b;color:inherit;max-width:100%}
+#games{display:grid;gap:9px}.game{display:flex;align-items:center;justify-content:space-between;gap:12px;background:#0d192b;border:1px solid #34465f;border-radius:10px;padding:13px;text-align:left;color:inherit}
+.game[aria-pressed=true]{border-color:#a6e05e;background:#23382d}
+.game small{color:#aebbd0;display:block;margin-top:5px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.65 ui-monospace,monospace;background:#0d192b;padding:18px;border-radius:10px}
+#error{color:#ffb5b5}#status{color:#c7d7ec}
+</style></head><body><main>
+<h1>Irrational Fan</h1><p>Technically true. Statistically ridiculous.</p>
+<section><h2>Choose a matchup</h2>
+<div class="controls"><select id="mode" aria-label="Schedule range"><option value="week">Next scheduled week</option><option value="future">All future games</option></select>
+<input id="search" placeholder="Filter by team" aria-label="Filter by team"></div>
+<div id="games" aria-live="polite"></div>
+<div class="controls"><label for="side">Make the case for</label><select id="side" aria-label="Selected team"></select>
+<button id="run" disabled>Find irrational evidence</button></div>
+<div id="status" role="status"></div><div id="error" role="alert"></div></section>
+<section id="results" hidden><h2>Discovery report</h2><pre id="report"></pre></section>
+</main><script>
+const $=id=>document.getElementById(id);
+let games=[],selected=null;
+function render(){
+ const q=$("search").value.trim().toLowerCase(),list=games.filter(g=>(g.home_team+" "+g.away_team).toLowerCase().includes(q));
+ $("games").replaceChildren();
+ if(!list.length){$("games").textContent="No upcoming games found.";return;}
+ for(const g of list){
+  const b=document.createElement("button");b.className="game";b.type="button";
+  b.setAttribute("aria-pressed",String(g.game_id===selected));
+  const left=document.createElement("span");left.textContent=g.away_team+" at "+g.home_team;
+  const detail=document.createElement("small");detail.textContent=new Date(g.kickoff).toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"})+" · Week "+g.week;
+  left.append(detail);b.append(left);b.onclick=()=>{selected=g.game_id;render();updateSide();};$("games").append(b);
+ }
+}
+function updateSide(){
+ const g=games.find(x=>x.game_id===selected);$("side").replaceChildren();$("run").disabled=!g;
+ if(!g)return;
+ for(const [name,id] of [[g.home_team,g.home_id],[g.away_team,g.away_id]]){
+  const o=document.createElement("option");o.value=id;o.textContent=name;$("side").append(o);
+ }
+}
+async function load(){
+ $("error").textContent="";$("status").textContent="Loading schedule...";$("run").disabled=true;
+ try{
+  const r=await fetch("api/games?mode="+encodeURIComponent($("mode").value));
+  const data=await r.json();if(!r.ok)throw Error(data.detail||"Unable to load games");
+  games=data.games;selected=games.some(g=>g.game_id===selected)?selected:(games[0]?.game_id??null);
+  render();updateSide();$("status").textContent=games.length+" scheduled games";
+ }catch(e){games=[];selected=null;render();updateSide();$("status").textContent="";$("error").textContent=e.message;}
+}
+$("mode").onchange=load;$("search").oninput=render;
+$("run").onclick=async()=>{
+ $("run").disabled=true;$("error").textContent="";$("status").textContent="Searching historical games...";
+ try{
+  const r=await fetch("api/discover",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({game_id:selected,team_id:Number($("side").value)})});
+  const data=await r.json();if(!r.ok)throw Error(data.detail||"Discovery failed");
+  $("report").textContent=data.report;$("results").hidden=false;$("results").scrollIntoView({behavior:"smooth"});
+  $("status").textContent=data.count+" discoveries";
+ }catch(e){$("error").textContent=e.message;$("status").textContent="";}
+ finally{$("run").disabled=!selected;}
+};
+load();
+</script></body></html>
