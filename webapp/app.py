@@ -5,6 +5,7 @@ import asyncio
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
+import math
 from zoneinfo import ZoneInfo
 
 import pandas as pd
@@ -22,7 +23,7 @@ app = FastAPI(title="Irrational Fan", version="0.1.0")
 
 # Keep Uvicorn at one worker so this guard covers every request.
 _DISCOVERY_LOCK = asyncio.Lock()
-_REPORT_CACHE: OrderedDict[tuple[str, int], dict] = OrderedDict()
+_REPORT_CACHE: OrderedDict[tuple, dict] = OrderedDict()
 _CACHE_LIMIT = 32
 
 
@@ -30,6 +31,9 @@ _CACHE_LIMIT = 32
 class MatchupRequest(BaseModel):
     game_id: str = Field(min_length=1, max_length=100)
     team_id: int | None = None
+    min_sample_size: int = Field(default=3, ge=3, le=30)
+    max_conditions: int = Field(default=4, ge=1, le=8)
+    discovery_mode: str = Field(default="entertaining", pattern="^(entertaining|balanced|evidence)$")
 
 
 def _schedule_files(now: datetime) -> list[Path]:
@@ -107,8 +111,8 @@ def games(mode: str = Query("week", pattern="^(week|future)$"),
 
 @app.get("/api/cache")
 def cached_reports():
-    return {"reports": [{"game_id": game_id, "team_id": team_id, **report}
-            for (game_id, team_id), report in reversed(list(_REPORT_CACHE.items()))],
+    return {"reports": [{"game_id": game_id, "team_id": team_id, "min_sample_size": min_sample_size, "max_conditions": max_conditions, "discovery_mode": discovery_mode, **report}
+            for (game_id, team_id, min_sample_size, max_conditions, discovery_mode), report in reversed(list(_REPORT_CACHE.items()))],
             "count": len(_REPORT_CACHE), "limit": _CACHE_LIMIT}
 
 
@@ -135,7 +139,7 @@ async def run_discovery(request: MatchupRequest):
     selected_home = request.team_id is None or request.team_id == game["home_id"]
     team = game["home_team"] if selected_home else game["away_team"]
     opponent = game["away_team"] if selected_home else game["home_team"]
-    cache_key = (game["game_id"], int(game["home_id"] if selected_home else game["away_id"]))
+    cache_key = (game["game_id"], int(game["home_id"] if selected_home else game["away_id"]), request.min_sample_size, request.max_conditions, request.discovery_mode)
     cached = _REPORT_CACHE.get(cache_key)
     if cached is not None:
         _REPORT_CACHE.move_to_end(cache_key)
@@ -152,14 +156,52 @@ async def run_discovery(request: MatchupRequest):
             result = await asyncio.to_thread(
                 discover, team=team, opponent=opponent, game_date=game["date"],
                 home=selected_home, print_report=False,
+                min_sample_size=request.min_sample_size, max_conditions=request.max_conditions,
             )
         except FileNotFoundError as exc:
             raise HTTPException(503, "Processed data unavailable; run python process.py") from exc
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
+        discoveries = [_serialize_discovery(d) for d in result.discoveries]
+        if request.discovery_mode == "balanced":
+            discoveries.sort(key=lambda d: (d["ranking_score"] + 2 * math.log1p(d["n_games"]) - 2 * len(d["conditions"])), reverse=True)
+        elif request.discovery_mode == "evidence":
+            discoveries.sort(key=lambda d: (d["n_games"], -len(d["conditions"]), d["ranking_score"]), reverse=True)
         response = {"game": game, "team": result.team, "opponent": result.opponent,
+                    "discoveries": discoveries, "settings": request.model_dump(),
                     "report": result.report, "count": len(result.discoveries)}
         _REPORT_CACHE[cache_key] = response
         if len(_REPORT_CACHE) > _CACHE_LIMIT:
             _REPORT_CACHE.popitem(last=False)
         return response
+
+
+def _serialize_discovery(d):
+    """Return a JSON-safe evidence view without losing the original report."""
+    def safe(v):
+        if v is None:
+            return None
+        if hasattr(v, "item"):
+            v = v.item()
+        if isinstance(v, (datetime,)):
+            return v.isoformat()
+        if isinstance(v, float) and not math.isfinite(v):
+            return None
+        if isinstance(v, (str, int, float, bool)):
+            return v
+        return str(v)
+
+    return {
+        "scope": d.scope, "description": d.description, "record": d.record_str,
+        "wins": d.wins, "losses": d.losses, "n_games": d.n_games,
+        "win_pct": safe(d.win_pct), "streak": d.streak,
+        "ranking_score": safe(d.ranking_score), "objective": d.objective,
+        "favorable_label": d.favorable_label,
+        "population_size": d.population_size, "candidates_evaluated": d.candidates_evaluated,
+        "conditions": [c.display() for c in d.conditions],
+        "matching_games": [{
+            "season": safe(g.season), "date": safe(g.date), "team": g.team,
+            "opponent": g.opponent, "team_score": safe(g.team_score),
+            "opponent_score": safe(g.opponent_score), "won": bool(g.won),
+        } for g in d.matching_games],
+    }
