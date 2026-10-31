@@ -73,3 +73,13 @@ def test_busy_discovery_returns_429(monkeypatch):
             module._DISCOVERY_LOCK.release()
 
     asyncio.run(run())
+
+
+def test_discovery_modes_change_search_objective():
+    entertaining = module._discovery_config("entertaining")
+    balanced = module._discovery_config("balanced")
+    evidence = module._discovery_config("evidence")
+    assert entertaining.ranking.rarity > balanced.ranking.rarity > evidence.ranking.rarity
+    assert entertaining.ranking.sample_size < balanced.ranking.sample_size < evidence.ranking.sample_size
+    assert entertaining.search.beam_width < balanced.search.beam_width < evidence.search.beam_width
+    assert entertaining.search.min_success_rate < balanced.search.min_success_rate < evidence.search.min_success_rate
