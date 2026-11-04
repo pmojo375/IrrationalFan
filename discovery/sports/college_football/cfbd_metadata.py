@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-METADATA_PATH = Path(__file__).resolve().parents[3] / "data" / "cfbd_teams_2026.json"
+METADATA_PATH = Path(__file__).resolve().parents[2] / "data" / "cfbd_teams_2026.json"
 D1 = {"fbs", "fcs"}
 FIELDS = {
     "mascot": "mascot", "color": "primary_color", "alternateColor": "alternate_color",
@@ -77,7 +77,7 @@ def enrich_metadata(df: pd.DataFrame, path: Path = METADATA_PATH) -> pd.DataFram
     out["same_mascot"] = (out["mascot"].notna() & out["opp_mascot"].notna() & out["mascot"].str.casefold().eq(out["opp_mascot"].str.casefold())).astype("boolean")
     out["same_mascot"] = out["same_mascot"].where(out["mascot"].notna() & out["opp_mascot"].notna())
     out["same_primary_color"] = out["primary_color"].eq(out["opp_primary_color"]).astype("boolean").where(out["primary_color"].notna() & out["opp_primary_color"].notna())
-    out["visitor_stadium_larger"] = (out["opp_stadium_capacity"] > out["stadium_capacity"]).astype("boolean").where(out["stadium_capacity"].notna() & out["opp_stadium_capacity"].notna())
+    out["opponent_stadium_larger"] = (out["opp_stadium_capacity"] > out["stadium_capacity"]).astype("boolean").where(out["stadium_capacity"].notna() & out["opp_stadium_capacity"].notna())
     out["campus_distance_miles"] = [
         _distance(a,b,c,d) for a,b,c,d in zip(out["stadium_latitude"],out["stadium_longitude"],out["opp_stadium_latitude"],out["opp_stadium_longitude"])
     ]
