@@ -75,6 +75,8 @@ class SearchConfig:
     diverse_search: bool = False
     include_advanced: bool = False
     novelty_bonus: float = 0.0
+    selected_feature_groups: tuple[str, ...] | None = None
+    require_all_feature_groups: bool = False
 
 
 @dataclass

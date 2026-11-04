@@ -24,6 +24,7 @@ from discovery.sports.college_football.features import (
     feature_specs,
     searchable_feature_names,
 )
+from discovery.sports.college_football.feature_groups import filter_features, feature_group
 from discovery.sports.college_football.formatting import describe_discovery, format_report
 from discovery.engine.streaks import recent_favorable_streak
 
@@ -495,6 +496,9 @@ def discover(
     )
 
     features = [f for f in [*feature_specs(), *(advanced_feature_specs() if search_cfg.include_advanced else [])] if f.name not in LEAKAGE_COLUMNS]
+    features = filter_features(features, search_cfg.selected_feature_groups)
+    if not features:
+        raise ValueError('No searchable features are available in the selected categories')
     assert_no_leakage([f.name for f in features])
 
     frames = _prepare_scope_frames(
@@ -538,6 +542,10 @@ def discover(
         date_col="game_date",
         top_n=top_n,
     )
+
+    if search_cfg.require_all_feature_groups and search_cfg.selected_feature_groups:
+        required = set(search_cfg.selected_feature_groups)
+        discoveries = [d for d in discoveries if required.issubset({feature_group(c.feature) for c in d.conditions})]
 
     # Final guard: keep only discoveries whose conditions match current form,
     # then attach historical evidence for the survivors only.
