@@ -539,3 +539,34 @@ def test_future_schedule_venue_and_missing_game(tmp_path):
         resolve_scheduled_game(1, 2, "2026-11-07", home=True, schedule_dir=tmp_path, now=now)
     with pytest.raises(ValueError, match="Expected exactly one"):
         resolve_scheduled_game(1, 2, "2026-11-08", schedule_dir=tmp_path, now=now)
+
+
+def test_diverse_beam_preserves_unusual_feature_when_record_scores_dominate():
+    from discovery.engine.search import Candidate, _diverse_beam
+    record = [
+        Candidate((Condition("wins", Operator.GE, i),), np.array([True]),
+                  5, 0, 5, 100 - i)
+        for i in range(8)
+    ]
+    unusual = Candidate((Condition("attendance", Operator.GE, 50000),),
+                        np.array([True]), 4, 0, 4, 20)
+    selected = _diverse_beam(record + [unusual], 4)
+    assert len(selected) == 4
+    assert any(c.conditions[0].feature == "attendance" for c in selected)
+
+
+def test_novelty_prefers_context_to_redundant_record_conditions():
+    from discovery.engine.search import _novelty
+    records = (Condition("wins", Operator.GE, 4),
+               Condition("opp_wins", Operator.GE, 2))
+    context = (Condition("wins", Operator.GE, 4),
+               Condition("attendance", Operator.GE, 50000))
+    assert _novelty(context) > _novelty(records)
+
+
+def test_advanced_features_remain_opt_in():
+    from discovery.sports.college_football.features import advanced_feature_specs
+    basic = {f.name for f in feature_specs()}
+    advanced = {f.name for f in advanced_feature_specs()}
+    assert "EPAplay_off" in advanced
+    assert "EPAplay_off" not in basic

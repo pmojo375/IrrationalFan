@@ -72,6 +72,9 @@ class SearchConfig:
     min_success_rate: float = 0.55
     # Prefer streaks at least this long when ranking streak discoveries.
     min_streak: int = 3
+    diverse_search: bool = False
+    include_advanced: bool = False
+    novelty_bonus: float = 0.0
 
 
 @dataclass
