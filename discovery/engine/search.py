@@ -29,6 +29,63 @@ from discovery.engine.streaks import recent_favorable_streak
 from discovery.engine.validation import apply_conditions, recount_record
 
 
+
+# Families are intentionally broad: records and previous-game scoring must not
+# monopolize the beam before rarer contextual features can combine.
+def _feature_family(name: str) -> str:
+    n = name.removeprefix("opp_")
+    if n in {"wins", "losses", "games_played", "win_pct", "win_streak",
+             "loss_streak", "has_winning_record", "has_losing_record", "win_diff"}:
+        return "record"
+    if n.startswith("previous_"):
+        return "previous"
+    if n in {"rest_days", "after_bye", "days_since_last_game"}:
+        return "rest"
+    if n in {"month", "month_name", "day_of_week", "week"}:
+        return "calendar"
+    if n in {"is_home", "neutral_site", "venue", "attendance",
+             "conference", "division", "conference_competition"}:
+        return "setting"
+    if "rank" in n or n in {"rank", "ranking"}:
+        return "ranking"
+    return "advanced"
+
+
+def _novelty(conditions: Sequence[Condition]) -> float:
+    families = {_feature_family(c.feature) for c in conditions}
+    uncommon = families - {"record", "previous"}
+    # A single unusual dimension is worthwhile, but several distinct
+    # dimensions make a more interesting story than extra score thresholds.
+    return min(2.0, len(uncommon) * 0.75 + max(0, len(families) - 1) * 0.25)
+
+
+def _diverse_beam(candidates: list[Candidate], width: int) -> list[Candidate]:
+    ordered = sorted(candidates, key=lambda c: c.score, reverse=True)
+    if width <= 0:
+        return []
+    # Reserve up to one third of slots for distinct non-record families.
+    reserved = max(1, width // 3)
+    chosen: list[Candidate] = []
+    used: set[tuple] = set()
+    for family in ("advanced", "setting", "rest", "ranking", "calendar"):
+        if len(chosen) >= reserved:
+            break
+        for cand in ordered:
+            key = tuple(c.key() for c in cand.conditions)
+            if key not in used and any(_feature_family(c.feature) == family for c in cand.conditions):
+                chosen.append(cand)
+                used.add(key)
+                break
+    for cand in ordered:
+        if len(chosen) >= width:
+            break
+        key = tuple(c.key() for c in cand.conditions)
+        if key not in used:
+            chosen.append(cand)
+            used.add(key)
+    return chosen
+
+
 DescriptionFn = Callable[[str, Sequence[Condition], Discovery], str]
 
 
@@ -127,7 +184,8 @@ class BeamSearchStrategy(SearchStrategy):
                 )
             )
 
-        beam = sorted(beam, key=lambda c: c.score, reverse=True)[: config.beam_width]
+        beam = (_diverse_beam(beam, config.beam_width) if config.diverse_search
+                else sorted(beam, key=lambda c: c.score, reverse=True)[: config.beam_width])
 
         max_depth = min(config.max_depth, config.max_conditions)
         for _depth in range(2, max_depth + 1):
@@ -176,7 +234,8 @@ class BeamSearchStrategy(SearchStrategy):
                         )
                     )
 
-            next_beam = sorted(next_beam, key=lambda c: c.score, reverse=True)[: config.beam_width]
+            next_beam = (_diverse_beam(next_beam, config.beam_width) if config.diverse_search
+                         else sorted(next_beam, key=lambda c: c.score, reverse=True)[: config.beam_width])
             if not next_beam:
                 break
             beam = next_beam
@@ -222,8 +281,8 @@ class BeamSearchStrategy(SearchStrategy):
             weights=weights,
             objective="record",
         )
-        return (
-            Candidate(
+        if config.novelty_bonus:
+            score += config.novelty_bonus * _novelty(conditions)\n        return (\n            Candidate(
                 conditions=conditions,
                 mask=mask,
                 wins=wins,
@@ -360,6 +419,8 @@ class DiscoveryEngine:
                 weights=self.weights,
                 objective=disc.objective,
             )
+            if self.config.novelty_bonus:
+                score += self.config.novelty_bonus * _novelty(disc.conditions)
             disc.ranking_score = score
             if self.describe is not None:
                 disc.description = self.describe(scope, disc.conditions, disc)
