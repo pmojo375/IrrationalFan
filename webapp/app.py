@@ -69,14 +69,17 @@ def _discovery_config(mode: str, evidence_strength: int = 50, weirdness: int = 5
                               n_conditions=2.0, tiny_sample_penalty=25.0)
     elif mode == "chaos":
         cfg.search = replace(cfg.search, beam_width=85, max_atomic_candidates=160,
-                             min_success_rate=0.55)
+                             min_success_rate=0.55, diverse_search=True,
+                             include_advanced=True, novelty_bonus=9.0)
         cfg.ranking = replace(cfg.ranking, rarity=24.0, n_conditions=20.0,
                               sample_size=12.0, tiny_sample_penalty=22.0)
     elif mode == "custom":
         e, w = evidence_strength / 100, weirdness / 100
         cfg.search = replace(cfg.search, min_success_rate=round(.50 + .30 * e, 3),
                              beam_width=30 + round(70 * w),
-                             max_atomic_candidates=60 + round(80 * w))
+                             max_atomic_candidates=60 + round(80 * w),
+                             diverse_search=w >= .5, include_advanced=w >= .65,
+                             novelty_bonus=round(12 * w, 2))
         cfg.ranking = replace(cfg.ranking, sample_size=8 + 52 * e,
                               win_pct=20 + 20 * e, rarity=2 + 30 * w,
                               n_conditions=2 + 22 * w,
