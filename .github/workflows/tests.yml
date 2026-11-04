@@ -22,13 +22,25 @@ jobs:
       - run: python -m pip install -r requirements-web.txt
       - run: python process.py --offline
       - run: python -m pytest -q
+
+  build-dataset:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: python -m pip install -r requirements-web.txt
+      - name: Refresh current-season data and build dataset
+        run: python process.py --download
       - name: Verify processed dataset
-        if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
         run: |
           test -s cfb_team_games.parquet
           ls -lh cfb_team_games.parquet
-      - name: Upload processed dataset
-        if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+      - name: Upload refreshed dataset
         uses: actions/upload-artifact@v4
         with:
           name: cfb-team-games
