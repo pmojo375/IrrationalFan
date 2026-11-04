@@ -15,6 +15,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 from discovery.config import EngineConfig
+from discovery.sports.college_football.feature_groups import GROUPS
 from discovery.sports.college_football.dates import parse_game_dates
 from discovery.sports.college_football.matchup import discover
 from discovery.sports.college_football.schedule import SCHEDULE_DIR
@@ -38,6 +39,8 @@ class MatchupRequest(BaseModel):
     discovery_mode: str = Field(default="entertaining", pattern="^(entertaining|balanced|evidence|perfect|rivalry|chaos|custom)$")
     evidence_strength: int = Field(default=50, ge=0, le=100)
     weirdness: int = Field(default=50, ge=0, le=100)
+    feature_groups: list[str] | None = None
+    require_all_groups: bool = False
 
 
 def _discovery_config(mode: str, evidence_strength: int = 50, weirdness: int = 50) -> EngineConfig:
@@ -92,6 +95,16 @@ def _effective_config(request: MatchupRequest) -> EngineConfig:
     cfg = _discovery_config(request.discovery_mode, request.evidence_strength, request.weirdness)
     cfg.search = replace(cfg.search, min_sample_size=request.min_sample_size,
                          max_conditions=request.max_conditions, max_depth=request.max_conditions)
+    if request.feature_groups is not None:
+        if not request.feature_groups or len(request.feature_groups) != len(set(request.feature_groups)) or any(g not in GROUPS for g in request.feature_groups):
+            raise ValueError('Select one or more valid, nonduplicate feature categories')
+        if request.require_all_groups and len(request.feature_groups) > request.max_conditions:
+            raise ValueError('Maximum conditions must be at least the number of required categories')
+        cfg.search = replace(cfg.search, selected_feature_groups=tuple(sorted(request.feature_groups)),
+                             require_all_feature_groups=request.require_all_groups,
+                             include_advanced=cfg.search.include_advanced or 'advanced' in request.feature_groups)
+    elif request.require_all_groups:
+        raise ValueError('Select categories before requiring every category')
     return cfg
 
 
@@ -203,7 +216,7 @@ async def run_discovery(request: MatchupRequest):
     selected_home = request.team_id is None or request.team_id == game["home_id"]
     team = game["home_team"] if selected_home else game["away_team"]
     opponent = game["away_team"] if selected_home else game["home_team"]
-    cache_key = (game["game_id"], int(game["home_id"] if selected_home else game["away_id"]), request.min_sample_size, request.max_conditions, request.discovery_mode, request.evidence_strength if request.discovery_mode == "custom" else None, request.weirdness if request.discovery_mode == "custom" else None)
+    cache_key = (game["game_id"], int(game["home_id"] if selected_home else game["away_id"]), request.min_sample_size, request.max_conditions, request.discovery_mode, request.evidence_strength if request.discovery_mode == "custom" else None, request.weirdness if request.discovery_mode == "custom" else None, tuple(sorted(request.feature_groups)) if request.feature_groups is not None else None, request.require_all_groups)
     cached = _REPORT_CACHE.get(cache_key)
     if cached is not None:
         _REPORT_CACHE.move_to_end(cache_key)
@@ -216,7 +229,10 @@ async def run_discovery(request: MatchupRequest):
         if cached is not None:
             _REPORT_CACHE.move_to_end(cache_key)
             return cached
-        config = _effective_config(request)
+        try:
+            config = _effective_config(request)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
         try:
             result = await asyncio.to_thread(
                 discover, team=team, opponent=opponent, game_date=game["date"],
