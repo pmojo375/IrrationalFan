@@ -282,7 +282,9 @@ class BeamSearchStrategy(SearchStrategy):
             objective="record",
         )
         if config.novelty_bonus:
-            score += config.novelty_bonus * _novelty(conditions)\n        return (\n            Candidate(
+            score += config.novelty_bonus * _novelty(conditions)
+        return (
+            Candidate(
                 conditions=conditions,
                 mask=mask,
                 wins=wins,
