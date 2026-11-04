@@ -35,7 +35,7 @@ class MatchupRequest(BaseModel):
     team_id: int | None = None
     min_sample_size: int = Field(default=3, ge=3, le=30)
     max_conditions: int = Field(default=4, ge=1, le=8)
-    discovery_mode: str = Field(default="entertaining", pattern="^(entertaining|balanced|evidence)$")
+    discovery_mode: str = Field(default="entertaining", pattern="^(entertaining|balanced|evidence|perfect|rivalry|chaos)$")
 
 
 def _discovery_config(mode: str) -> EngineConfig:
@@ -55,6 +55,21 @@ def _discovery_config(mode: str) -> EngineConfig:
             tiny_sample_penalty=35.0, tiny_sample_threshold=10,
         )
         cfg.search = replace(cfg.search, beam_width=65, min_success_rate=0.65)
+    elif mode == "perfect":
+        cfg.ranking = replace(cfg.ranking, perfect_record_bonus=45.0,
+                              sample_size=28.0, n_conditions=1.0,
+                              tiny_sample_penalty=30.0, tiny_sample_threshold=6)
+        cfg.search = replace(cfg.search, beam_width=60, min_success_rate=0.80)
+    elif mode == "rivalry":
+        cfg.search = replace(cfg.search, scopes=("h2h", "team", "opponent"),
+                             beam_width=60, min_success_rate=0.60)
+        cfg.ranking = replace(cfg.ranking, sample_size=30.0, rarity=3.0,
+                              n_conditions=2.0, tiny_sample_penalty=25.0)
+    elif mode == "chaos":
+        cfg.search = replace(cfg.search, beam_width=85, max_atomic_candidates=110,
+                             min_success_rate=0.55)
+        cfg.ranking = replace(cfg.ranking, rarity=24.0, n_conditions=20.0,
+                              sample_size=12.0, tiny_sample_penalty=22.0)
     return cfg
 
 
@@ -185,10 +200,22 @@ async def run_discovery(request: MatchupRequest):
             raise HTTPException(503, "Processed data unavailable; run python process.py") from exc
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
-        discoveries = [_serialize_discovery(d) for d in result.discoveries]
+        selected = result.discoveries
+        if request.discovery_mode == "perfect":
+            selected = [d for d in selected if d.losses == 0 and d.wins >= request.min_sample_size
+                        and d.objective == "record"]
+        elif request.discovery_mode == "rivalry":
+            # Prioritize direct matchup evidence; fall back to team/opponent history
+            # when head-to-head samples are too small.
+            selected = sorted(selected, key=lambda d: (d.scope == "h2h", d.ranking_score),
+                              reverse=True)
+        elif request.discovery_mode == "chaos":
+            selected = sorted(selected, key=lambda d: (len(d.conditions), d.ranking_score),
+                              reverse=True)
+        discoveries = [_serialize_discovery(d) for d in selected]
         response = {"game": game, "team": result.team, "opponent": result.opponent,
                     "discoveries": discoveries, "settings": request.model_dump(),
-                    "report": result.report, "count": len(result.discoveries)}
+                    "report": result.report, "count": len(discoveries)}
         _REPORT_CACHE[cache_key] = response
         if len(_REPORT_CACHE) > _CACHE_LIMIT:
             _REPORT_CACHE.popitem(last=False)
