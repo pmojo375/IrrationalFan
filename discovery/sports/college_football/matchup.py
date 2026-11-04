@@ -20,6 +20,7 @@ from discovery.sports.college_football.features import (
     MONTH_NAMES,
     assert_no_leakage,
     enrich_team_games,
+    advanced_feature_specs,
     feature_specs,
     searchable_feature_names,
 )
@@ -493,7 +494,7 @@ def discover(
         overrides=feature_overrides,
     )
 
-    features = [f for f in feature_specs() if f.name not in LEAKAGE_COLUMNS]
+    features = [f for f in [*feature_specs(), *(advanced_feature_specs() if search_cfg.include_advanced else [])] if f.name not in LEAKAGE_COLUMNS]
     assert_no_leakage([f.name for f in features])
 
     frames = _prepare_scope_frames(
