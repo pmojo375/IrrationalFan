@@ -127,3 +127,37 @@ def test_alternate_styles_accepted_by_api(monkeypatch):
     assert rivalry["discoveries"][0]["scope"] == "h2h"
     assert len(seen) == 3
     assert client.post("/api/discover", json={"game_id": "styles", "discovery_mode": "nonsense"}).status_code == 422
+
+
+def test_custom_parameters_change_backend_and_cache(monkeypatch):
+    monkeypatch.setattr(module, "_read_games", lambda now: [{
+        "game_id": "custom", "home_id": 1, "away_id": 2,
+        "home_team": "A", "away_team": "B", "date": "2026-11-07",
+    }])
+    seen = []
+    def fake_discover(**kwargs):
+        seen.append(kwargs["config"])
+        return SimpleNamespace(team="A", opponent="B", report="", discoveries=[])
+    monkeypatch.setattr(module, "discover", fake_discover)
+    module._REPORT_CACHE.clear()
+    client = TestClient(module.app)
+    low = {"game_id": "custom", "discovery_mode": "custom",
+           "evidence_strength": 0, "weirdness": 0}
+    high = {**low, "evidence_strength": 100, "weirdness": 100,
+            "min_sample_size": 10, "max_conditions": 6}
+    a = client.post("/api/discover", json=low)
+    b = client.post("/api/discover", json=high)
+    assert a.status_code == b.status_code == 200
+    assert len(seen) == 2
+    assert seen[1].search.min_success_rate > seen[0].search.min_success_rate
+    assert seen[1].search.beam_width > seen[0].search.beam_width
+    assert seen[1].ranking.rarity > seen[0].ranking.rarity
+    assert seen[1].ranking.sample_size > seen[0].ranking.sample_size
+    assert seen[1].search.max_depth == 6
+    assert seen[1].search.min_sample_size == 10
+    assert b.json()["effective_config"]["search"]["beam_width"] == 100
+    assert client.post("/api/discover", json=high).status_code == 200
+    assert len(seen) == 2
+    assert client.get("/api/cache").json()["count"] == 2
+    for bad in ({**high, "weirdness": 101}, {**high, "evidence_strength": -1}):
+        assert client.post("/api/discover", json=bad).status_code == 422
