@@ -188,9 +188,20 @@ def games(mode: str = Query("week", pattern="^(week|future)$"),
 
 @app.get("/api/cache")
 def cached_reports():
-    return {"reports": [{"game_id": game_id, "team_id": team_id, "min_sample_size": min_sample_size, "max_conditions": max_conditions, "discovery_mode": discovery_mode, "evidence_strength": evidence_strength, "weirdness": weirdness, **report}
-            for (game_id, team_id, min_sample_size, max_conditions, discovery_mode, evidence_strength, weirdness), report in reversed(list(_REPORT_CACHE.items()))],
-            "count": len(_REPORT_CACHE), "limit": _CACHE_LIMIT}
+    reports = []
+    for key, report in reversed(list(_REPORT_CACHE.items())):
+        (game_id, team_id, min_sample_size, max_conditions, discovery_mode,
+         evidence_strength, weirdness, feature_groups, require_all_groups) = key
+        reports.append({
+            **report,
+            "game_id": game_id, "team_id": team_id,
+            "min_sample_size": min_sample_size, "max_conditions": max_conditions,
+            "discovery_mode": discovery_mode, "evidence_strength": evidence_strength,
+            "weirdness": weirdness,
+            "feature_groups": list(feature_groups) if feature_groups is not None else None,
+            "require_all_groups": require_all_groups,
+        })
+    return {"reports": reports, "count": len(_REPORT_CACHE), "limit": _CACHE_LIMIT}
 
 
 @app.delete("/api/cache")

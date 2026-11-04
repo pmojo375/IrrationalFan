@@ -57,11 +57,17 @@ function updateSide(){
   const o=document.createElement("option");o.value=id;o.textContent=name;$("side").append(o);
  }
 }
+async function readApiResponse(response){
+ const text=await response.text();let data;
+ try{data=text?JSON.parse(text):{};}catch{throw Error(response.ok?'Invalid server response':'Server error (HTTP '+response.status+'). Check the IrrationalFan service logs.');}
+ if(!response.ok){const detail=data.detail||data.message||'Request failed (HTTP '+response.status+')';throw Error(typeof detail==='string'?detail:JSON.stringify(detail));}
+ return data;
+}
 async function load(){
  $("error").textContent="";$("status").textContent="Loading schedule...";$("run").disabled=true;
  try{
   const r=await fetch("api/games?mode="+encodeURIComponent($("mode").value));
-  const data=await r.json();if(!r.ok)throw Error(data.detail||"Unable to load games");
+  const data=await readApiResponse(r);
   games=data.games;showAllGames=false;selected=games.some(g=>g.game_id===selected)?selected:(games[0]?.game_id??null);
   render();updateSide();$("status").textContent=games.length+" scheduled games";
  }catch(e){games=[];selected=null;render();updateSide();$("status").textContent="";$("error").textContent=e.message;}
@@ -73,7 +79,7 @@ $("run").onclick=async()=>{
  $("run").disabled=true;$("error").textContent="";$("status").textContent="Searching historical games...";
  try{
   const r=await fetch("api/discover",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({game_id:selected,team_id:Number($("side").value),discovery_mode:$("discovery-mode").value,min_sample_size:Number($("min-games").value),max_conditions:Number($("max-conditions").value),evidence_strength:Number($("evidence-strength").value),weirdness:Number($("weirdness").value),feature_groups:([...document.querySelectorAll('.feature-choice:checked')].length===featureCategories.length&&!$('require-groups').checked)?null:[...document.querySelectorAll('.feature-choice:checked')].map(x=>x.value),require_all_groups:$('require-groups').checked})});
-  const data=await r.json();if(!r.ok)throw Error(data.detail||"Discovery failed");
+  const data=await readApiResponse(r);
   showResults(data);
   $("status").textContent=data.count+" discoveries";
  }catch(e){$("error").textContent=e.message;$("status").textContent="";}
@@ -82,8 +88,7 @@ $("run").onclick=async()=>{
 async function loadCache(){
  const area=$("cached-reports");$("cache-status").textContent="Loading cached reports...";
  try{
-  const r=await fetch("api/cache"),data=await r.json();
-  if(!r.ok)throw Error(data.detail||"Unable to load cache");
+  const r=await fetch("api/cache"),data=await readApiResponse(r);
   area.replaceChildren();$("cache-status").textContent=data.count+" of "+data.limit+" reports cached";
   for(const item of data.reports){
    const b=document.createElement("button");b.type="button";b.className="game";
@@ -99,8 +104,7 @@ $("clear-cache").onclick=async()=>{
  if(!confirm("Clear all cached predictions?"))return;
  $("clear-cache").disabled=true;
  try{
-  const r=await fetch("api/cache",{method:"DELETE"}),data=await r.json();
-  if(!r.ok)throw Error(data.detail||"Unable to clear cache");
+  const r=await fetch("api/cache",{method:"DELETE"}),data=await readApiResponse(r);
   await loadCache();$("cache-status").textContent=data.cleared+" cached reports cleared";
  }catch(e){$("cache-status").textContent=e.message;}
  finally{$("clear-cache").disabled=false;}
