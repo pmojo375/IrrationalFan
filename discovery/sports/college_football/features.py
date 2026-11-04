@@ -117,7 +117,7 @@ def feature_specs() -> list[FeatureSpec]:
         FeatureSpec('campus_distance_miles', 'numeric', 'Miles between home stadiums'),
         FeatureSpec('stadium_capacity', 'numeric', 'School home stadium capacity'),
         FeatureSpec('opp_stadium_capacity', 'numeric', 'Opponent home stadium capacity'),
-        FeatureSpec('visitor_stadium_larger', 'boolean', 'Opponent home stadium is larger'),
+        FeatureSpec('opponent_stadium_larger', 'boolean', 'Opponent home stadium is larger'),
     ])
 
     # Advanced efficiency metrics are useful for analysis, but overwhelm fan-facing
