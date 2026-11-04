@@ -20,6 +20,7 @@ from pathlib import Path
 import pandas as pd
 
 from discovery.sports.college_football.context import add_pregame_context, normalize_conference
+from discovery.sports.college_football.cfbd_metadata import enrich_metadata
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
@@ -397,6 +398,7 @@ def build_team_games() -> pd.DataFrame:
     for col in ["conference", "opp_conference"]:
         team_games[col] = team_games[col].map(normalize_conference)
     team_games = add_pregame_context(team_games)
+    team_games = enrich_metadata(team_games)
 
     team_games = team_games.sort_values(
         ["game_datetime", "game_id", "is_home"],
