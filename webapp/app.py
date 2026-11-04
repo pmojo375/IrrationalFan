@@ -68,7 +68,7 @@ def _discovery_config(mode: str, evidence_strength: int = 50, weirdness: int = 5
         cfg.ranking = replace(cfg.ranking, sample_size=30.0, rarity=3.0,
                               n_conditions=2.0, tiny_sample_penalty=25.0)
     elif mode == "chaos":
-        cfg.search = replace(cfg.search, beam_width=85, max_atomic_candidates=110,
+        cfg.search = replace(cfg.search, beam_width=85, max_atomic_candidates=160,
                              min_success_rate=0.55)
         cfg.ranking = replace(cfg.ranking, rarity=24.0, n_conditions=20.0,
                               sample_size=12.0, tiny_sample_penalty=22.0)
