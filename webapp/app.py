@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 import asyncio
-from collections import OrderedDict
+from contextlib import asynccontextmanager
 from dataclasses import replace
+import hashlib
+import json
+import os
+import threading
 from datetime import datetime
 from pathlib import Path
 import math
@@ -11,7 +15,9 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
+
+from webapp.jobs import JobStore, QueueFull
 from pydantic import BaseModel, Field
 
 from discovery.config import EngineConfig
@@ -22,13 +28,33 @@ from discovery.sports.college_football.schedule import SCHEDULE_DIR
 
 EASTERN = ZoneInfo("America/New_York")
 PAGE = Path(__file__).with_name("index.html")
-app = FastAPI(title="Irrational Fan", version="0.1.0")
-
-# Keep Uvicorn at one worker so this guard covers every request.
-_DISCOVERY_LOCK = asyncio.Lock()
-_REPORT_CACHE: OrderedDict[tuple, dict] = OrderedDict()
+_JOBS = None
+_JOBS_LOCK = threading.Lock()
 _CACHE_LIMIT = 32
 
+
+def _job_store():
+    global _JOBS
+    with _JOBS_LOCK:
+        if _JOBS is None:
+            path = os.environ.get("IRRATIONALFAN_JOB_DB", str(PAGE.parent.parent / "data" / "web_jobs.sqlite3"))
+            _JOBS = JobStore(path, limit=_CACHE_LIMIT)
+        return _JOBS
+
+
+@asynccontextmanager
+async def lifespan(app):
+    global _JOBS
+    _job_store()
+    try:
+        yield
+    finally:
+        if _JOBS is not None:
+            await asyncio.to_thread(_JOBS.close)
+            _JOBS = None
+
+
+app = FastAPI(title="Irrational Fan", version="0.2.0", lifespan=lifespan)
 
 
 class MatchupRequest(BaseModel):
@@ -186,34 +212,67 @@ def games(mode: str = Query("week", pattern="^(week|future)$"),
     return {"games": all_games, "mode": mode, "as_of": now.isoformat()}
 
 
+@app.get("/api/jobs")
+def recent_jobs():
+    return {"jobs": _job_store().list(), "limit": _CACHE_LIMIT}
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: str):
+    job = _job_store().get(job_id)
+    if job is None:
+        raise HTTPException(404, "Discovery no longer available. Start a new search.")
+    return job
+
+
 @app.get("/api/cache")
 def cached_reports():
+    store = _job_store()
     reports = []
-    for key, report in reversed(list(_REPORT_CACHE.items())):
-        (game_id, team_id, min_sample_size, max_conditions, discovery_mode,
-         evidence_strength, weirdness, feature_groups, require_all_groups) = key
-        reports.append({
-            **report,
-            "game_id": game_id, "team_id": team_id,
-            "min_sample_size": min_sample_size, "max_conditions": max_conditions,
-            "discovery_mode": discovery_mode, "evidence_strength": evidence_strength,
-            "weirdness": weirdness,
-            "feature_groups": list(feature_groups) if feature_groups is not None else None,
-            "require_all_groups": require_all_groups,
-        })
-    return {"reports": reports, "count": len(_REPORT_CACHE), "limit": _CACHE_LIMIT}
+    for item in store.list():
+        if item["status"] == "complete":
+            job = store.get(item["id"])
+            if job:  # A concurrent clear may remove a completed report.
+                reports.append({**job["result"], **job["settings"], "created_at": job["created_at"]})
+    return {"reports": reports, "count": len(reports), "limit": _CACHE_LIMIT}
 
 
 @app.delete("/api/cache")
-async def clear_cached_reports():
-    async with _DISCOVERY_LOCK:
-        cleared = len(_REPORT_CACHE)
-        _REPORT_CACHE.clear()
-    return {"cleared": cleared}
+def clear_cached_reports():
+    return {"cleared": _job_store().clear_completed()}
+
+
+@app.post("/api/jobs")
+async def start_discovery(request: MatchupRequest):
+    job, reused = await _submit_discovery(request)
+    return JSONResponse(job, status_code=200 if job["status"] == "complete" else 202,
+                        headers={"Location": "api/jobs/" + job["id"]})
 
 
 @app.post("/api/discover")
 async def run_discovery(request: MatchupRequest):
+    """Compatibility endpoint. The UI uses short-lived /api/jobs requests."""
+    job, _ = await _submit_discovery(request)
+    while job["status"] in ("queued", "running"):
+        await asyncio.sleep(.1)
+        job = _job_store().get(job["id"])
+        if job is None:
+            raise HTTPException(404, "Discovery cleared. Start a new search.")
+    if job["status"] == "failed":
+        raise HTTPException(job["error_status"] or 500, job["error"])
+    return job["result"]
+
+
+def _file_version(path):
+    path = Path(path)
+    try:
+        stat = path.stat()
+        return [str(path.resolve()), stat.st_mtime_ns, stat.st_size, stat.st_ino]
+    except FileNotFoundError:
+        return [str(path.resolve()), None]
+
+
+async def _submit_discovery(request: MatchupRequest):
     try:
         all_games = await asyncio.to_thread(_read_games, datetime.now(EASTERN))
     except (OSError, ValueError, KeyError) as exc:
@@ -227,54 +286,63 @@ async def run_discovery(request: MatchupRequest):
     selected_home = request.team_id is None or request.team_id == game["home_id"]
     team = game["home_team"] if selected_home else game["away_team"]
     opponent = game["away_team"] if selected_home else game["home_team"]
-    cache_key = (game["game_id"], int(game["home_id"] if selected_home else game["away_id"]), request.min_sample_size, request.max_conditions, request.discovery_mode, request.evidence_strength if request.discovery_mode == "custom" else None, request.weirdness if request.discovery_mode == "custom" else None, tuple(sorted(request.feature_groups)) if request.feature_groups is not None else None, request.require_all_groups)
-    cached = _REPORT_CACHE.get(cache_key)
-    if cached is not None:
-        _REPORT_CACHE.move_to_end(cache_key)
-        return cached
+    try:
+        config = _effective_config(request)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    settings = request.model_dump()
+    settings["team_id"] = game["home_id"] if selected_home else game["away_id"]
+    # Normalize settings that do not affect this search, including category order.
+    normalized = dict(settings)
+    if request.discovery_mode != "custom":
+        normalized.pop("evidence_strength")
+        normalized.pop("weirdness")
+    if normalized["feature_groups"] is not None:
+        normalized["feature_groups"] = sorted(normalized["feature_groups"])
+    identity = {"version": app.version, "settings": normalized, "game": game,
+                "config": _config_details(config),
+                "data": _file_version(config.data_path),
+                "schedules": [_file_version(path) for path in _schedule_files(datetime.now(EASTERN))]}
+    key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    metadata = {"game": game, "team": team, "opponent": opponent, "settings": settings}
+    try:
+        return _job_store().submit(key, metadata, lambda: _build_report(request, game, selected_home, config))
+    except QueueFull:
+        raise HTTPException(429, "The discovery queue is full. Please try again shortly.",
+                            headers={"Retry-After": "10"})
 
-    if _DISCOVERY_LOCK.locked():
-        raise HTTPException(429, "Another matchup is being analyzed. Please retry shortly.")
-    async with _DISCOVERY_LOCK:
-        cached = _REPORT_CACHE.get(cache_key)
-        if cached is not None:
-            _REPORT_CACHE.move_to_end(cache_key)
-            return cached
-        try:
-            config = _effective_config(request)
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        try:
-            result = await asyncio.to_thread(
-                discover, team=team, opponent=opponent, game_date=game["date"],
-                home=selected_home, print_report=False,
-                min_sample_size=request.min_sample_size, max_conditions=request.max_conditions,
-                config=config,
-            )
-        except FileNotFoundError as exc:
-            raise HTTPException(503, "Processed data unavailable; run python process.py") from exc
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        selected = result.discoveries
-        if request.discovery_mode == "perfect":
-            selected = [d for d in selected if d.losses == 0 and d.wins >= request.min_sample_size
-                        and d.objective == "record"]
-        elif request.discovery_mode == "rivalry":
-            # Prioritize direct matchup evidence; fall back to team/opponent history
-            # when head-to-head samples are too small.
-            selected = sorted(selected, key=lambda d: (d.scope == "h2h", d.ranking_score),
-                              reverse=True)
-        elif request.discovery_mode == "chaos":
-            selected = sorted(selected, key=lambda d: (len(d.conditions), d.ranking_score),
-                              reverse=True)
-        discoveries = [_serialize_discovery(d) for d in selected]
-        response = {"game": game, "team": result.team, "opponent": result.opponent,
-                    "discoveries": discoveries, "settings": request.model_dump(),
-                    "report": result.report, "count": len(discoveries), "effective_config": _config_details(config)}
-        _REPORT_CACHE[cache_key] = response
-        if len(_REPORT_CACHE) > _CACHE_LIMIT:
-            _REPORT_CACHE.popitem(last=False)
-        return response
+
+def _build_report(request, game, selected_home, config):
+    team = game["home_team"] if selected_home else game["away_team"]
+    opponent = game["away_team"] if selected_home else game["home_team"]
+    try:
+        result = discover(
+            team=team, opponent=opponent, game_date=game["date"],
+            home=selected_home, print_report=False,
+            min_sample_size=request.min_sample_size, max_conditions=request.max_conditions,
+            config=config,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(503, "Processed data unavailable; run python process.py") from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    selected = result.discoveries
+    if request.discovery_mode == "perfect":
+        selected = [d for d in selected if d.losses == 0 and d.wins >= request.min_sample_size
+                    and d.objective == "record"]
+    elif request.discovery_mode == "rivalry":
+        # Prioritize direct matchup evidence; fall back to team/opponent history
+        # when head-to-head samples are too small.
+        selected = sorted(selected, key=lambda d: (d.scope == "h2h", d.ranking_score),
+                          reverse=True)
+    elif request.discovery_mode == "chaos":
+        selected = sorted(selected, key=lambda d: (len(d.conditions), d.ranking_score),
+                          reverse=True)
+    discoveries = [_serialize_discovery(d) for d in selected]
+    response = {"game": game, "team": result.team, "opponent": result.opponent,
+                "discoveries": discoveries, "settings": request.model_dump(),
+                "report": result.report, "count": len(discoveries), "effective_config": _config_details(config)}
+    return response
 
 
 def _serialize_discovery(d):

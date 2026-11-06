@@ -49,16 +49,20 @@ class DiscoverResult:
         return path
 
 
-_DATA_CACHE: dict[str, pd.DataFrame] = {}
+_DATA_CACHE: dict[str, tuple[tuple[int, int, int], pd.DataFrame]] = {}
 
 
 def load_observations(data_path: Union[str, Path]) -> pd.DataFrame:
-    """Load and enrich the processed team-games parquet (cached by path)."""
-    key = str(Path(data_path).resolve())
-    if key not in _DATA_CACHE:
-        raw = pd.read_parquet(data_path)
-        _DATA_CACHE[key] = enrich_team_games(raw)
-    return _DATA_CACHE[key]
+    """Reuse enriched observations until the processed file is replaced or changed."""
+    path = Path(data_path).resolve()
+    key = str(path)
+    stat = path.stat()
+    signature = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+    cached = _DATA_CACHE.get(key)
+    if cached is None or cached[0] != signature:
+        raw = pd.read_parquet(path)
+        _DATA_CACHE[key] = (signature, enrich_team_games(raw))
+    return _DATA_CACHE[key][1]
 
 
 def clear_data_cache() -> None:
