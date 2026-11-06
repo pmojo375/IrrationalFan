@@ -9,3 +9,5 @@ __pycache__/
 
 /data/teams/
 /data/**/*.source.json
+/data/web_jobs.sqlite3*
+/data/web_jobs.lock

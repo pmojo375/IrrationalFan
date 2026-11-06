@@ -102,17 +102,54 @@ scheduled season/week, with a separate selector for all future scheduled games.
 Choose a matchup and the team whose case to argue; the server calls the same
 `discover()` engine as the CLI and displays its full text report.
 
-Endpoints: `GET /api/games?mode=week|future&team=...`,
-`POST /api/discover` with `{"game_id":"123","team_id":456}`,
-and `GET /health`. The game ID is checked against the cached schedule; callers
-cannot invent opponents or override the venue. Game dates are Eastern-local.
-Only games strictly after the current Eastern date are eligible, matching the
-existing engine's future-date validation. Today's games are intentionally excluded.
+### Background discoveries and recent history
+
+The page starts a search with `POST /api/jobs` and immediately receives a job ID
+(HTTP 202), then polls `GET /api/jobs/{id}` until it is complete or failed.
+Queued jobs include a queue position; running jobs include their start time.
+Completed job details include the report, structured discoveries and original settings.
+`GET /api/jobs` lists recent searches without downloading every report.
+An identical active search reconnects to its existing job; an identical completed
+search returns its saved result (HTTP 200). Different searches queue behind one
+worker. There are at most eight unfinished jobs; additional searches receive
+HTTP 429 with `Retry-After: 10`. Duplicate searches can still reconnect when full.
+Invalid settings are rejected before a job is queued.
+
+The page remembers the current job locally and reconnects after a refresh, including
+when the initial submit response was lost. It retries temporary connection errors
+and automatically displays finished results. Recent discoveries shows the style,
+creation time and status; opening one restores the search settings. Failed searches
+have a retry button. Clear finished discoveries removes only completed/failed jobs,
+leaving queued and running work alone.
+
+Jobs and results live in `data/web_jobs.sqlite3` by default. To place this file in
+another persistent, writable directory, set `IRRATIONALFAN_JOB_DB=/path/to/jobs.sqlite3`
+in the service environment. No new package, broker or separate worker service is
+required. The latest 32 finished searches are retained alongside unfinished work.
+Completed results survive service restarts. Work interrupted by a forced restart
+is marked failed with a retry message; it is not silently reported as still running.
+New requests invalidate saved-result reuse when the processed data, relevant
+schedules, effective configuration or application version changes. Existing history
+remains available as a snapshot. Bump the application version when changing engine
+semantics without a data/configuration change.
+
+**Run Uvicorn with one worker.** A process lock prevents a second worker from
+opening the same job store. Jobs run on one dedicated thread independently of
+HTTP connections; starting more web workers would duplicate the engine's data cache
+and increase memory use. Normal shutdown waits for accepted work; after a forced
+shutdown, reopen Recent discoveries to retry interrupted jobs.
+
+Compatibility endpoints remain: `POST /api/discover` waits for a report and can
+still exceed proxy timeouts, `GET /api/cache` returns saved completed reports,
+and `DELETE /api/cache` clears finished history. The browser uses the job endpoints.
+`GET /api/games?mode=week|future&team=...` and `GET /health` are unchanged.
+Game IDs and selected teams are checked against the saved schedule. Today's games
+are eligible, including in-progress games; previously completed, canceled and
+postponed games are excluded when the saved schedule marks them accordingly.
 
 This app reads cached source files; it does **not** refresh schedules on web
 requests. Run `python process.py` periodically (for example daily) as a separate
 job. Keep the Uvicorn listener on localhost behind Nginx, and apply rate limiting
-to the potentially CPU-heavy discovery endpoint before public deployment.
+to the potentially CPU-heavy discovery endpoints before public deployment.
 When proxying at a subdomain, route the entire hostname to port 8001. Run
-`python -m pytest tests/test_webapp.py -q` to check the web interface.
-
+`python -m pytest -q` to check the engine, API and persistent job queue.

@@ -29,7 +29,6 @@ def test_schedule_and_discovery(monkeypatch, tmp_path):
             ranking_score=10.0, description="One historical win",
             matching_games=[MatchingGame(2025, "2025-11-01", "Minnesota", "Iowa", 21, 14, True)],
         )]))
-    module._REPORT_CACHE.clear()
     client = TestClient(module.app)
     response = client.get("/api/games?mode=week")
     assert response.status_code == 200
@@ -51,28 +50,6 @@ def test_home_page():
     response = TestClient(module.app).get("/")
     assert response.status_code == 200
     assert "Irrational Fan" in response.text
-
-
-def test_busy_discovery_returns_429(monkeypatch):
-    import asyncio
-    from httpx import ASGITransport, AsyncClient
-
-    monkeypatch.setattr(module, "_read_games", lambda now: [{
-        "game_id": "busy-test", "home_id": 1, "away_id": 2,
-        "home_team": "A", "away_team": "B", "date": "2026-11-07",
-    }])
-    module._REPORT_CACHE.clear()
-
-    async def run():
-        await module._DISCOVERY_LOCK.acquire()
-        try:
-            async with AsyncClient(transport=ASGITransport(app=module.app), base_url="http://test") as client:
-                response = await client.post("/api/discover", json={"game_id": "busy-test"})
-                assert response.status_code == 429
-        finally:
-            module._DISCOVERY_LOCK.release()
-
-    asyncio.run(run())
 
 
 def test_discovery_modes_change_search_objective():
@@ -114,7 +91,6 @@ def test_alternate_styles_accepted_by_api(monkeypatch):
                           matching_games=[]),
             ])
     monkeypatch.setattr(module, "discover", fake_discover)
-    module._REPORT_CACHE.clear()
     client = TestClient(module.app)
     for mode in ("perfect", "rivalry", "chaos"):
         response = client.post("/api/discover", json={"game_id": "styles", "discovery_mode": mode})
@@ -139,7 +115,6 @@ def test_custom_parameters_change_backend_and_cache(monkeypatch):
         seen.append(kwargs["config"])
         return SimpleNamespace(team="A", opponent="B", report="", discoveries=[])
     monkeypatch.setattr(module, "discover", fake_discover)
-    module._REPORT_CACHE.clear()
     client = TestClient(module.app)
     low = {"game_id": "custom", "discovery_mode": "custom",
            "evidence_strength": 0, "weirdness": 0}
