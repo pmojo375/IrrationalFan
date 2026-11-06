@@ -21,7 +21,7 @@ from webapp.jobs import JobStore, QueueFull
 from pydantic import BaseModel, Field
 
 from discovery.config import EngineConfig
-from discovery.sports.college_football.feature_groups import GROUPS
+from discovery.sports.college_football.feature_groups import GROUPS, feature_catalog
 from discovery.sports.college_football.dates import parse_game_dates
 from discovery.sports.college_football.matchup import discover
 from discovery.sports.college_football.schedule import SCHEDULE_DIR
@@ -54,7 +54,7 @@ async def lifespan(app):
             _JOBS = None
 
 
-app = FastAPI(title="Irrational Fan", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Irrational Fan", version="0.3.0", lifespan=lifespan)
 
 
 class MatchupRequest(BaseModel):
@@ -67,6 +67,11 @@ class MatchupRequest(BaseModel):
     weirdness: int = Field(default=50, ge=0, le=100)
     feature_groups: list[str] | None = None
     require_all_groups: bool = False
+    only_stats_ui: bool = False
+    selected_stats_ui: list[str] = Field(default_factory=list, max_length=200)
+    allowed_stats: list[str] | None = Field(default=None, max_length=200)
+    required_stats: list[str] = Field(default_factory=list, max_length=8)
+    excluded_stats: list[str] = Field(default_factory=list, max_length=200)
 
 
 def _discovery_config(mode: str, evidence_strength: int = 50, weirdness: int = 50) -> EngineConfig:
@@ -131,7 +136,43 @@ def _effective_config(request: MatchupRequest) -> EngineConfig:
                              include_advanced=cfg.search.include_advanced or 'advanced' in request.feature_groups)
     elif request.require_all_groups:
         raise ValueError('Select categories before requiring every category')
+    catalog = {f["id"]: f for f in feature_catalog()}
+    for values in (request.allowed_stats, request.required_stats, request.excluded_stats):
+        if values is not None and (len(values) != len(set(values)) or any(n not in catalog for n in values)):
+            raise ValueError("Choose valid, nonduplicate stat IDs")
+    allowed, required, excluded = request.allowed_stats, set(request.required_stats), set(request.excluded_stats)
+    if required & excluded:
+        raise ValueError("A stat cannot be both required and excluded")
+    if len(required) > request.max_conditions:
+        raise ValueError("Maximum conditions must be at least the number of required stats")
+    if allowed is not None and (not allowed or not required.issubset(allowed)):
+        raise ValueError("Select at least one allowed stat and include every required stat")
+    selected = set(allowed if allowed is not None else catalog) - excluded
+    if request.feature_groups is not None:
+        selected = {n for n in selected if catalog[n]["group"] in request.feature_groups}
+    if not selected or not required.issubset(selected):
+        raise ValueError("Required stats must belong to enabled categories; allow at least one stat")
+    cfg.search = replace(cfg.search,
+                         allowed_features=tuple(sorted(allowed)) if allowed is not None else None,
+                         required_features=tuple(sorted(required)), excluded_features=tuple(sorted(excluded)),
+                         include_advanced=cfg.search.include_advanced or any(catalog[n]["advanced"] for n in
+                             (selected if allowed is not None else required)))
     return cfg
+
+
+@app.get("/api/features")
+def selectable_features():
+    from fastparquet import ParquetFile
+    try:
+        columns = set(ParquetFile(str(EngineConfig().data_path)).columns)
+    except (OSError, ValueError):
+        columns = set()
+    catalog = feature_catalog()
+    for feature in catalog:
+        feature["available"] = not feature["advanced"] or feature["id"] in columns
+        if not feature["available"]:
+            feature["reason"] = "Not present in the processed dataset"
+    return {"features": catalog, "groups": GROUPS}
 
 
 def _config_details(cfg: EngineConfig) -> dict:
@@ -294,6 +335,11 @@ async def _submit_discovery(request: MatchupRequest):
     settings["team_id"] = game["home_id"] if selected_home else game["away_id"]
     # Normalize settings that do not affect this search, including category order.
     normalized = dict(settings)
+    normalized.pop("only_stats_ui", None)
+    normalized.pop("selected_stats_ui", None)
+    for name in ("allowed_stats", "required_stats", "excluded_stats"):
+        if normalized[name] is not None:
+            normalized[name] = sorted(normalized[name])
     if request.discovery_mode != "custom":
         normalized.pop("evidence_strength")
         normalized.pop("weirdness")

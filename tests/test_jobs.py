@@ -207,3 +207,19 @@ def test_observations_reload_after_dataset_replacement(monkeypatch, tmp_path):
         assert matchup.load_observations(data) == "second snapshot"
     finally:
         matchup.clear_data_cache()
+
+
+def test_stat_choices_are_saved_and_order_does_not_duplicate_jobs(engine):
+    client = TestClient(module.app)
+    settings = {'game_id':'123', 'allowed_stats':['wins','rest_days'],
+                'required_stats':['rest_days'], 'excluded_stats':['month']}
+    first = client.post('/api/jobs', json=settings).json()
+    assert engine.started.wait(2)
+    repeated = client.post('/api/jobs', json={**settings,'allowed_stats':['rest_days','wins']}).json()
+    assert first['id'] == repeated['id']
+    different = client.post('/api/jobs', json={**settings,'required_stats':['wins']}).json()
+    assert different['id'] != first['id']
+    engine.release.set()
+    saved = wait_done(client,first['id'])
+    assert saved['settings']['required_stats'] == ['rest_days']
+    assert saved['result']['effective_config']['search']['excluded_features'] == ['month']

@@ -18,13 +18,14 @@ button:disabled{opacity:.5;cursor:wait}input,select{background:#0d192b;border:1p
 .hero{padding:16px 0 5px}.eyebrow{text-transform:uppercase;letter-spacing:.14em;color:#a6e05e;font-size:.75rem;font-weight:800}.layout{display:grid;grid-template-columns:minmax(270px,.7fr) minmax(0,1.3fr);gap:18px;align-items:start}.layout section{margin-top:14px}.game{width:100%;cursor:pointer}.game:hover,.discovery:hover{border-color:#a6e05e}.muted{color:#aebbd0}.discovery{background:#0d192b;border:1px solid #34465f;border-radius:12px;padding:16px;margin:12px 0}.discovery h3{margin:6px 0;font-size:1.1rem}.record{font-size:2rem;font-weight:850;color:#a6e05e}.tags{display:flex;gap:7px;flex-wrap:wrap}.tag{border:1px solid #46546b;border-radius:99px;padding:3px 9px;font-size:.8rem;color:#d4e0f1}.discovery details{margin-top:12px}.discovery summary{cursor:pointer;color:#a6e05e}.evidence{width:100%;border-collapse:collapse;margin-top:12px;font-size:.85rem}.evidence th,.evidence td{padding:8px;border-bottom:1px solid #34465f;text-align:left}.evidence-wrap{overflow-x:auto}.settings{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.settings label{display:grid;gap:5px}.settings select,.settings input{width:100%}.selected-line{padding:10px 0;color:#aebbd0;font-size:.9rem}.selected-line strong{color:#edf2fa}#game-picker{border:1px solid #34465f;border-radius:10px;padding:12px;margin:12px 0}#game-picker>summary,.advanced>summary,.cache-panel>summary{cursor:pointer;font-weight:700;color:#a6e05e}#game-count{float:right;color:#aebbd0;font-weight:400;font-size:.85rem}#games{margin:12px 0;max-height:360px;overflow-y:auto}.secondary{background:#263b4b;color:#edf2fa;width:100%}.advanced{margin:16px 0}.advanced .settings{margin-top:14px}.cache-panel{background:#152237;border:1px solid #2b3c56;border-radius:16px;padding:20px;margin-top:20px}#results{min-width:0}#report{max-height:400px;overflow:auto}.custom-controls{grid-column:1/-1;display:grid;gap:12px;padding:12px;border:1px solid #34465f;border-radius:10px}.custom-controls[hidden]{display:none}.custom-controls input[type=range]{padding:0;accent-color:#a6e05e}.custom-controls output{float:right;color:#a6e05e}.feature-picker{grid-column:1/-1;margin-top:12px}.feature-picker summary{cursor:pointer;color:#a6e05e;font-weight:700}.feature-groups{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin:12px 0}.feature-groups label,.feature-require{display:flex;align-items:center;gap:8px}.feature-groups input,.feature-require input{width:auto!important}.debug-config{margin-top:14px}.debug-config summary{cursor:pointer;color:#a6e05e}.debug-config pre{max-height:260px;overflow:auto}#results[hidden],#raw-details[hidden]{display:none}@media(min-width:741px){.layout>section:first-child{position:sticky;top:12px;max-height:calc(100vh - 24px);overflow-y:auto}}@media(max-width:740px){.layout{grid-template-columns:1fr}.settings{grid-template-columns:1fr}main{padding:20px 12px 60px}section{padding:16px}}
 
 .job-progress{border:1px solid #46546b;border-radius:12px;background:#0d192b;padding:14px;margin:14px 0}.job-progress[hidden]{display:none}.job-progress strong{display:block;color:#edf2fa;margin-bottom:5px}.job-progress p{margin:8px 0;font-size:.9rem}.steps{display:flex;gap:8px;margin-bottom:12px}.steps span{font-size:.8rem;border-radius:6px;background:#263b4b;padding:5px 9px}.steps .active{background:#a6e05e;color:#101b0b}.job-progress progress{width:100%;accent-color:#a6e05e;height:5px}.recent-item{border-bottom:1px solid #34465f;padding:12px 0}.recent-item .game{margin-bottom:6px}.recent-item small{display:block;color:#aebbd0;margin:5px 0}.recent-item .job-error{color:#ffb5b5}.recent-item button{max-width:100%}
+.stat-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid #34465f}.stat-row label{font-size:.85rem}.stat-row select{padding:6px;width:auto}.stat-group{margin:12px 0}.stat-group summary{cursor:pointer}.stat-group .controls button{font-size:.8rem;padding:6px 10px}.stat-row small{display:block;color:#aebbd0}#stat-summary{font-size:.85rem;margin:12px 0;color:#a6e05e}#stat-search{width:100%}
 </style></head><body><main>
 <div class="hero"><div class="eyebrow">College football discovery explorer</div><h1>Irrational Fan</h1></div><p>Technically true. Statistically ridiculous.</p>
 <div class="layout"><section><h2>Choose a matchup</h2>
 <div class="controls"><select id="mode" aria-label="Schedule range"><option value="week">Next scheduled week</option><option value="future">All future games</option></select>
 <input id="search" placeholder="Filter by team" aria-label="Filter by team"></div>
 <div class="selected-line">Selected: <strong id="selected-game">Loading...</strong></div><details id="game-picker" open><summary>Browse matchups <span id="game-count"></span></summary><div id="games" aria-live="polite"></div><button type="button" id="more-games" class="secondary" hidden>Show all games</button></details>
-<details class="advanced"><summary>Advanced discovery settings</summary><div class="settings"><label>Discovery style<select id="discovery-mode"><option value="entertaining">Entertaining</option><option value="balanced">Balanced</option><option value="evidence">Evidence-focused</option><option value="perfect">Perfect records</option><option value="rivalry">Rivalry &amp; opponent history</option><option value="chaos">Cherry-picked chaos</option><option value="custom">Custom (manual tuning)</option></select><small class="muted">Styles change the historical search, not just the result sorting. Rivalry mode prioritizes head-to-head evidence; chaos favors more specific patterns.</small></label><div id="custom-controls" class="custom-controls" hidden><label>Evidence strength <output id="evidence-value">50</output><input id="evidence-strength" type="range" min="0" max="100" step="5" value="50"></label><label>Weirdness <output id="weirdness-value">50</output><input id="weirdness" type="range" min="0" max="100" step="5" value="50"></label><small class="muted">Evidence raises the success-rate threshold and sample weighting. Weirdness expands the search and rewards unusual combinations.</small></div><label>Minimum matching games<input id="min-games" type="number" min="3" max="30" value="3"></label><label>Maximum conditions<input id="max-conditions" type="number" min="1" max="8" value="4"></label></div><details class="feature-picker"><summary>Choose searchable statistics (optional)</summary><p class="muted">Leave all selected for the usual search. Uncheck categories to limit what the engine can use. New team colors and stadium metadata will be available in a later data update.</p><div id="feature-groups" class="feature-groups"></div><label class="feature-require"><input id="require-groups" type="checkbox"> Require at least one condition from every selected category</label><small class="muted">Requiring every category can return fewer or no discoveries.</small></details><details class="debug-config"><summary>Debug: effective backend parameters</summary><pre id="config-json">Run a discovery to inspect the configuration.</pre></details></details><div class="controls"><label for="side">Make the case for</label><select id="side" aria-label="Selected team"></select>
+<details class="advanced"><summary>Advanced discovery settings</summary><div class="settings"><label>Discovery style<select id="discovery-mode"><option value="entertaining">Entertaining</option><option value="balanced">Balanced</option><option value="evidence">Evidence-focused</option><option value="perfect">Perfect records</option><option value="rivalry">Rivalry &amp; opponent history</option><option value="chaos">Cherry-picked chaos</option><option value="custom">Custom (manual tuning)</option></select><small class="muted">Styles change the historical search, not just the result sorting. Rivalry mode prioritizes head-to-head evidence; chaos favors more specific patterns.</small></label><div id="custom-controls" class="custom-controls" hidden><label>Evidence strength <output id="evidence-value">50</output><input id="evidence-strength" type="range" min="0" max="100" step="5" value="50"></label><label>Weirdness <output id="weirdness-value">50</output><input id="weirdness" type="range" min="0" max="100" step="5" value="50"></label><small class="muted">Evidence raises the success-rate threshold and sample weighting. Weirdness expands the search and rewards unusual combinations.</small></div><label>Minimum matching games<input id="min-games" type="number" min="3" max="30" value="3"></label><label>Maximum conditions<input id="max-conditions" type="number" min="1" max="8" value="4"></label></div><details class="feature-picker"><summary>Customize searchable stats</summary><p>Allow a stat as an ingredient, require it in every discovery, or exclude it entirely. Requirements are never silently relaxed.</p><input id="stat-search" placeholder="Find a stat, e.g. rest or opponent wins" aria-label="Find a stat"><label class="feature-require"><input id="only-stats" type="checkbox"> Search only stats I explicitly select</label><small class="muted">With this on, only stats you change to Allow or Require are used. Otherwise the engine can use all allowed stats.</small><div id="stat-summary" role="status"></div><div class="controls"><button id="reset-stats" type="button" class="secondary">Reset stats</button></div><div id="stat-picker"></div><div id="feature-groups" hidden></div><label hidden><input id="require-groups" type="checkbox"></label></details><details class="debug-config"><summary>Debug: effective backend parameters</summary><pre id="config-json">Run a discovery to inspect the configuration.</pre></details></details><div class="controls"><label for="side">Make the case for</label><select id="side" aria-label="Selected team"></select>
 <button id="run" disabled>Find irrational evidence</button></div>
 <div id="job-progress" class="job-progress" hidden><div class="steps" aria-hidden="true"><span id="step-queued">Queued</span><span id="step-running">Searching</span><span id="step-complete">Ready</span></div><strong id="job-title"></strong><div id="job-detail" role="status" aria-live="polite"></div><p id="job-help">You can refresh or leave this page. Your search will keep running.</p><progress id="job-spinner" aria-label="Discovery in progress"></progress></div>
 <div id="status" role="status"></div><div id="error" role="alert"></div></section>
@@ -36,15 +37,54 @@ let following=false,followToken=0,pollTimer=null,activeJob=null;
 const storageKey='irrationalfan-search-v1:'+new URL('.',location.href).pathname;
 function remember(value){try{if(value)localStorage.setItem(storageKey,JSON.stringify(value));else localStorage.removeItem(storageKey);}catch{}}
 function recalled(){try{return JSON.parse(localStorage.getItem(storageKey)||'null');}catch{return null;}}
-function setFollowing(value){following=value;$('run').disabled=value||!selected;$('run').textContent=value?'Following your search…':'Find irrational evidence';}
+function setFollowing(value){following=value;$('run').disabled=value||!selected||!statsReady;$('run').textContent=value?'Following your search…':'Find irrational evidence';}
 async function api(url,options={}){
  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);
  try{return await readApiResponse(await fetch(url,{...options,signal:controller.signal}));}
  finally{clearTimeout(timer);}
 }
-function requestSettings(){return {game_id:selected,team_id:Number($('side').value),discovery_mode:$('discovery-mode').value,min_sample_size:Number($('min-games').value),max_conditions:Number($('max-conditions').value),evidence_strength:Number($('evidence-strength').value),weirdness:Number($('weirdness').value),feature_groups:([...document.querySelectorAll('.feature-choice:checked')].length===featureCategories.length&&!$('require-groups').checked)?null:[...document.querySelectorAll('.feature-choice:checked')].map(x=>x.value),require_all_groups:$('require-groups').checked};}
+let statCatalog=[],statStates={},explicitStats=new Set(),statsReady=false;
+const statPrefsKey=storageKey+':stats';
+function saveStatPrefs(){try{localStorage.setItem(statPrefsKey,JSON.stringify({states:statStates,explicit:[...explicitStats],only:$('only-stats').checked}));}catch{}}
+function selectedStats(){return statCatalog.filter(f=>statStates[f.id]!=='exclude'&&(!$('only-stats').checked||explicitStats.has(f.id)||statStates[f.id]==='require')).map(f=>f.id);}
+function renderStatPicker(){
+ const area=$('stat-picker'),q=$('stat-search').value.toLowerCase();area.replaceChildren();
+ for(const [group,title] of Object.entries(statGroups)){
+  const entries=statCatalog.filter(f=>f.group===group&&(f.label+' '+f.perspective).toLowerCase().includes(q));if(!entries.length)continue;
+  const panel=node('details','stat-group');panel.open=!!q;panel.append(node('summary','',title));
+  const bulk=node('div','controls');
+  for(const [state,label] of [['allow','Allow all'],['exclude','Exclude all']]){
+   const b=node('button','',label);b.type='button';b.onclick=()=>{statCatalog.filter(f=>f.group===group&&f.available!==false).forEach(f=>{statStates[f.id]=state;explicitStats.add(f.id);});saveStatPrefs();renderStatPicker();};bulk.append(b);
+  }panel.append(bulk);
+  for(const f of entries){
+   const row=node('div','stat-row'),label=node('label','',f.label),select=node('select');select.id='stat-'+f.id;label.htmlFor=select.id;
+   label.append(node('small','',f.perspective==='opponent'?'Opponent':'Your team / game'));
+   for(const [value,text] of [['allow','Allow'],['require','Require'],['exclude','Exclude']]){const opt=node('option','',text);opt.value=value;select.append(opt);}select.value=statStates[f.id];if(f.available===false){select.disabled=true;label.append(node('small','',f.reason));}
+   select.onchange=()=>{statStates[f.id]=select.value;explicitStats.add(f.id);saveStatPrefs();updateStatSummary();};row.append(label,select);panel.append(row);
+  }area.append(panel);
+ }
+ updateStatSummary();
+}
+let statGroups={};
+function updateStatSummary(){const n=Object.values(statStates).filter(s=>s==='require').length;$('stat-summary').textContent=selectedStats().length+' allowed stats · '+n+' required';}
+function resetStatPicker(){statStates=Object.fromEntries(statCatalog.map(f=>[f.id,f.advanced?'exclude':'allow']));explicitStats=new Set();$('only-stats').checked=false;saveStatPrefs();renderStatPicker();}
+async function loadStatPicker(){
+ try{
+  const data=await api('api/features');statCatalog=data.features;statGroups=data.groups;
+  let saved;try{saved=JSON.parse(localStorage.getItem(statPrefsKey)||'null');}catch{}
+  statStates=Object.fromEntries(statCatalog.map(f=>[f.id,['allow','require','exclude'].includes(saved?.states?.[f.id])?saved.states[f.id]:(f.advanced?'exclude':'allow')]));
+  explicitStats=new Set(saved?.explicit||[]);$('only-stats').checked=!!saved?.only;statsReady=true;renderStatPicker();setFollowing(following);
+ }catch(e){$('stat-summary').textContent='Stat controls unavailable: '+e.message;$('run').disabled=true;}
+}
+function restoreStatPicker(s){
+ const allowed=s.allowed_stats;
+ statStates=Object.fromEntries(statCatalog.map(f=>[f.id,s.only_stats_ui&&!(s.selected_stats_ui||[]).includes(f.id)?(f.advanced?'exclude':'allow'):(s.excluded_stats||[]).includes(f.id)|| (allowed!=null&&!allowed.includes(f.id)) || (s.feature_groups!=null&&!s.feature_groups.includes(f.group))?'exclude':(s.required_stats||[]).includes(f.id)?'require':f.advanced&&allowed==null&&!s.feature_groups?.includes('advanced')&&s.discovery_mode!=='chaos'&&!(s.discovery_mode==='custom'&&s.weirdness>=65)?'exclude':'allow']));
+ explicitStats=new Set(s.selected_stats_ui||allowed||[]);$('only-stats').checked=!!s.only_stats_ui;saveStatPrefs();renderStatPicker();
+}
+$('stat-search').oninput=renderStatPicker;$('only-stats').onchange=()=>{saveStatPrefs();updateStatSummary();};$('reset-stats').onclick=resetStatPicker;
+function requestSettings(){return {game_id:selected,team_id:Number($('side').value),discovery_mode:$('discovery-mode').value,min_sample_size:Number($('min-games').value),max_conditions:Number($('max-conditions').value),evidence_strength:Number($('evidence-strength').value),weirdness:Number($('weirdness').value),feature_groups:null,require_all_groups:false,allowed_stats:selectedStats(),required_stats:statCatalog.filter(f=>statStates[f.id]==='require').map(f=>f.id),excluded_stats:statCatalog.filter(f=>statStates[f.id]==='exclude').map(f=>f.id),only_stats_ui:$('only-stats').checked,selected_stats_ui:[...explicitStats]};}
 function restoreSettings(job){
- const s=job.settings;if(!s)return;
+ const s=job.settings;if(!s)return;restoreStatPicker(s);
  if(job.game&&!games.some(g=>g.game_id===job.game.game_id))games.push(job.game);
  selected=s.game_id;render();updateSide();$('side').value=s.team_id??job.game?.home_id;
  for(const [id,key] of [['discovery-mode','discovery_mode'],['min-games','min_sample_size'],['max-conditions','max_conditions'],['evidence-strength','evidence_strength'],['weirdness','weirdness']]){if(s[key]!=null)$(id).value=s[key];}
@@ -122,7 +162,7 @@ function render(){
  $("more-games").textContent=showAllGames?"Show fewer games":"Show all "+list.length+" games";
 }
 function updateSide(){
- const g=games.find(x=>x.game_id===selected);$("side").replaceChildren();$("run").disabled=following||!g;
+ const g=games.find(x=>x.game_id===selected);$("side").replaceChildren();$("run").disabled=following||!g||!statsReady;
  if(!g)return;
  for(const [name,id] of [[g.home_team,g.home_id],[g.away_team,g.away_id]]){
   const o=document.createElement("option");o.value=id;o.textContent=name;$("side").append(o);
@@ -179,7 +219,7 @@ $('clear-cache').onclick=async()=>{
  finally{$('clear-cache').disabled=false;}
 };
 async function initialize(){
- const saved=recalled();await load();await loadCache();
+ const saved=recalled();await load();await loadStatPicker();await loadCache();
  if(saved?.id)openJob(saved.id);else if(saved?.settings)startSearch(saved.settings);
 }
 $("sort").onchange=renderDiscoveries;
