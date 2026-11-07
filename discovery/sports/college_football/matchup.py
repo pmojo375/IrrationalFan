@@ -501,6 +501,21 @@ def discover(
 
     features = [f for f in [*feature_specs(), *(advanced_feature_specs() if search_cfg.include_advanced else [])] if f.name not in LEAKAGE_COLUMNS]
     features = filter_features(features, search_cfg.selected_feature_groups)
+    if search_cfg.allowed_features is not None or search_cfg.required_features or search_cfg.excluded_features:
+        # Month and month_name represent one selectable statistic.
+        features = [f for f in features if f.name != "month_name"]
+        names = {f.name for f in features}
+        search_cfg.opponent_feature_map = {
+            name: (name[4:] if name.startswith("opp_") else "opp_" + name)
+            for name in names if (name[4:] if name.startswith("opp_") else "opp_" + name) in names
+        }
+        unavailable = [name for name in search_cfg.required_features
+                       if name not in names or name not in team_feats or pd.isna(team_feats[name])]
+        if unavailable:
+            labels = {f.name: f.label for f in features}
+            raise ValueError("Required stats unavailable for this matchup: " +
+                             ", ".join(labels.get(n, n) for n in unavailable) +
+                             ". Change these stats from Require to Allow.")
     if not features:
         raise ValueError('No searchable features are available in the selected categories')
     assert_no_leakage([f.name for f in features])

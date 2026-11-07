@@ -153,3 +153,31 @@ job. Keep the Uvicorn listener on localhost behind Nginx, and apply rate limitin
 to the potentially CPU-heavy discovery endpoints before public deployment.
 When proxying at a subdomain, route the entire hostname to port 8001. Run
 `python -m pytest -q` to check the engine, API and persistent job queue.
+
+### Individual stat controls
+
+Customize searchable stats offers a searchable, categorized list with separate
+team and opponent entries. Each stat has Allow, Require and Exclude states, plus
+category-wide Allow/Exclude controls. Advanced metrics start excluded and become
+searchable when explicitly allowed. Dataset-missing advanced metrics are disabled.
+Preferences are remembered in the browser; opening recent discoveries restores
+its original selections. New team-color and stadium-capacity features remain disabled.
+
+“Search only stats I explicitly select” limits the search to stats the visitor
+has explicitly changed to Allow or Require. Otherwise all allowed stats can be
+used. Required stats must appear in every returned discovery; excluded stats never
+enter candidate generation. Required stats seed beam expansion before optional
+conditions, including when another required condition leaves the evidence set
+unchanged. Requirements unavailable in the matchup return an actionable message;
+valid searches with insufficient qualifying history can still return zero results.
+Requirements are never relaxed automatically. Search remains a bounded heuristic,
+so a zero-result search is not proof that no mathematical combination exists.
+
+`GET /api/features` provides the curated stat catalog and dataset availability.
+Job submissions accept `allowed_stats` (a whitelist, or null for style/category
+defaults), `required_stats`, and `excluded_stats`. Unknown IDs, duplicates,
+required/excluded conflicts, or too many requirements are rejected. Existing
+category-based API requests remain supported. For opponent-history searches,
+team/opponent stat selections are mapped to that scope's underlying perspective.
+Saved-job identity includes the stat selections but ignores their order and purely
+visual picker settings.

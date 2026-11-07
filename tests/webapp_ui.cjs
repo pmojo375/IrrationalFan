@@ -15,6 +15,7 @@ function launch(saved){
   if(saved)w.localStorage.setItem(key,JSON.stringify(saved));
   const timeout=w.setTimeout.bind(w);w.setTimeout=(fn,ms)=>timeout(fn,ms===1500||ms===4000?20:ms);
   w.fetch=async(url,opts={})=>{
+   if(url==='api/features')return response({features:[{id:'rest_days',label:'Rest days',group:'previous',perspective:'team',advanced:false},{id:'opp_wins',label:'Opponent pregame wins',group:'records',perspective:'opponent',advanced:false},{id:'month',label:'Month',group:'schedule',perspective:'team',advanced:false}],groups:{previous:'Previous games',records:'Records',schedule:'Schedule'}});
    if(url.startsWith('api/games'))return response({games:[game]});
    if(url==='api/jobs'&&opts.method==='POST'){
     posts++;const settings=JSON.parse(opts.body);
@@ -39,13 +40,17 @@ async function waitFor(check){for(let n=0;n<300;n++){if(check())return;await new
  let dom=launch();let w=dom.window;const $=id=>w.document.getElementById(id);
  await waitFor(()=>$('run').disabled===false);
  $('discovery-mode').value='custom';$('discovery-mode').onchange();$('weirdness').value='80';$('weirdness').oninput();
+ $('stat-rest_days').value='require';$('stat-rest_days').onchange();
+ $('stat-month').value='exclude';$('stat-month').onchange();
+ $('only-stats').checked=true;$('only-stats').onchange();
  $('run').click();await waitFor(()=>w.localStorage.getItem(key)?.includes('job-1'));
+ assert.deepEqual(job.settings.allowed_stats,['rest_days']);assert.deepEqual(job.settings.required_stats,['rest_days']);assert.ok(job.settings.excluded_stats.includes('month'));
  assert.equal(posts,1);assert.equal($('job-progress').hidden,false);assert.equal($('run').disabled,true);
  const saved=JSON.parse(w.localStorage.getItem(key));dom.window.close();
  // Reload reconnects by ID without another POST, even after a transient poll failure.
  pollFailures=1;dom=launch(saved);w=dom.window;
  await waitFor(()=>$('job-detail').textContent.includes('elapsed'));
- assert.equal(posts,1);completed=true;
+ assert.equal(posts,1);assert.equal($('stat-rest_days').value,'require');assert.equal($('stat-month').value,'exclude');assert.equal($('only-stats').checked,true);assert.equal($('stat-opp_wins').value,'allow');completed=true;
  await waitFor(()=>$('results').hidden===false);
  assert.equal($('results-title').textContent,'The case for Michigan State');
  assert.equal($('run').disabled,false);assert.equal(w.localStorage.getItem(key),null);

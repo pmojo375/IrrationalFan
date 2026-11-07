@@ -77,6 +77,10 @@ class SearchConfig:
     novelty_bonus: float = 0.0
     selected_feature_groups: tuple[str, ...] | None = None
     require_all_feature_groups: bool = False
+    allowed_features: tuple[str, ...] | None = None
+    required_features: tuple[str, ...] = ()
+    excluded_features: tuple[str, ...] = ()
+    opponent_feature_map: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

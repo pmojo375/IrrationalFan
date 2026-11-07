@@ -43,3 +43,14 @@ def filter_features(features: list[FeatureSpec], groups: tuple[str, ...] | None)
         return features
     allowed = set(groups)
     return [f for f in features if feature_group(f.name) in allowed]
+
+
+def feature_catalog():
+    """Curated user-facing IDs; aliases and outcome fields are never selectable."""
+    from discovery.sports.college_football.features import feature_specs, advanced_feature_specs
+    unique = {f.name: f for f in [*feature_specs(), *advanced_feature_specs()]
+              if f.name != "month_name"}
+    return [{"id": f.name, "label": f.label, "group": feature_group(f.name),
+             "perspective": "opponent" if f.name.startswith("opp_") else "team",
+             "advanced": f.name not in {x.name for x in feature_specs()}}
+            for f in unique.values()]

@@ -141,9 +141,17 @@ class BeamSearchStrategy(SearchStrategy):
         if population_size == 0:
             return [], stats
 
+        required = config.required_features
         atomics = generate_atomic_conditions(
             df, features, current, max_candidates=config.max_atomic_candidates
         )
+        # Reserve candidates for every required stat independently of the global budget.
+        for name in required:
+            extra = generate_atomic_conditions(df, [f for f in features if f.name == name], current,
+                                               max_candidates=12)
+            atomics.extend(c for c in extra if c.key() not in {a.key() for a in atomics})
+        if any(not any(c.feature == name for c in atomics) for name in required):
+            return [], stats
         stats.atomic_conditions = len(atomics)
         if not atomics:
             return [], stats
@@ -156,6 +164,8 @@ class BeamSearchStrategy(SearchStrategy):
         discoveries: list[Discovery] = []
 
         for cond in atomics:
+            if required and cond.feature != required[0]:
+                continue
             mask = masks[cond.key()]
             cand, evals = self._evaluate_candidate(
                 df,
@@ -194,6 +204,8 @@ class BeamSearchStrategy(SearchStrategy):
 
             for parent in beam:
                 for cond in atomics:
+                    if _depth <= len(required) and cond.feature != required[_depth - 1]:
+                        continue
                     if not can_combine(parent.conditions, cond):
                         continue
                     keyset = frozenset(c.key() for c in parent.conditions) | {cond.key()}
@@ -203,7 +215,7 @@ class BeamSearchStrategy(SearchStrategy):
 
                     child_mask = parent.mask & masks[cond.key()]
                     # Skip if intersection unchanged (new condition adds nothing)
-                    if child_mask.sum() == parent.mask.sum():
+                    if child_mask.sum() == parent.mask.sum() and cond.feature not in required:
                         continue
 
                     child_conds = tuple(sorted(parent.conditions + (cond,), key=lambda c: c.key()))
@@ -264,7 +276,7 @@ class BeamSearchStrategy(SearchStrategy):
         wins, losses, win_pct = recount_record(df, mask, target_col=target_col)
         if wins + losses < config.min_sample_size:
             return None, 1
-        if win_pct < config.min_success_rate and not (losses == 0 and wins >= config.min_sample_size):
+        if set(config.required_features).issubset(c.feature for c in conditions) and win_pct < config.min_success_rate and not (losses == 0 and wins >= config.min_sample_size):
             # Still allow strong streaks even if overall rate is middling
             streak = recent_favorable_streak(df, mask, target_col=target_col, date_col=date_col)
             if streak < config.min_streak:
@@ -309,6 +321,8 @@ class BeamSearchStrategy(SearchStrategy):
     ) -> list[Discovery]:
         # Defer building full evidence lists until after ranking/dedup — materializing
         # matching games for every beam candidate dominated runtime.
+        if not set(config.required_features).issubset(c.feature for c in cand.conditions):
+            return []
         n_games = cand.wins + cand.losses
         win_pct = cand.wins / n_games if n_games else 0.0
 
@@ -395,6 +409,16 @@ class DiscoveryEngine:
         date_col: str = "game_date",
         favorable_label: str = "wins",
     ) -> tuple[list[Discovery], SearchStats]:
+        config = self.config
+        if scope == "opponent" and config.opponent_feature_map:
+            remap = lambda names: tuple(config.opponent_feature_map.get(n, n) for n in names)
+            config = replace(config,
+                             allowed_features=remap(config.allowed_features) if config.allowed_features is not None else None,
+                             required_features=remap(config.required_features),
+                             excluded_features=remap(config.excluded_features))
+        features = [f for f in features
+                    if (config.allowed_features is None or f.name in config.allowed_features)
+                    and f.name not in config.excluded_features]
         discoveries, stats = self.strategy.search(
             df,
             features,
@@ -402,7 +426,7 @@ class DiscoveryEngine:
             scope=scope,
             target_col=target_col,
             date_col=date_col,
-            config=self.config,
+            config=config,
             weights=self.weights,
             favorable_label=favorable_label,
         )
