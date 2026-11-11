@@ -137,6 +137,8 @@ def _effective_config(request: MatchupRequest) -> EngineConfig:
     elif request.require_all_groups:
         raise ValueError('Select categories before requiring every category')
     catalog = {f["id"]: f for f in feature_catalog()}
+    # The API must not accept selections that the deployed parquet cannot support.
+    deployed = {f["id"]: f for f in selectable_features()["features"]}
     for values in (request.allowed_stats, request.required_stats, request.excluded_stats):
         if values is not None and (len(values) != len(set(values)) or any(n not in catalog for n in values)):
             raise ValueError("Choose valid, nonduplicate stat IDs")
@@ -150,6 +152,11 @@ def _effective_config(request: MatchupRequest) -> EngineConfig:
     selected = set(allowed if allowed is not None else catalog) - excluded
     if request.feature_groups is not None:
         selected = {n for n in selected if catalog[n]["group"] in request.feature_groups}
+    unavailable = {n for n in selected if deployed[n]["group"] == "team_stadium" and not deployed[n]["available"]}
+    if required & unavailable:
+        raise ValueError("Required stats are not present in the deployed dataset: " + ", ".join(sorted(required & unavailable)))
+    if allowed is not None and unavailable:
+        raise ValueError("Selected stats are not present in the deployed dataset: " + ", ".join(sorted(unavailable)))
     if not selected or not required.issubset(selected):
         raise ValueError("Required stats must belong to enabled categories; allow at least one stat")
     cfg.search = replace(cfg.search,
@@ -169,7 +176,8 @@ def selectable_features():
         columns = set()
     catalog = feature_catalog()
     for feature in catalog:
-        feature["available"] = not feature["advanced"] or feature["id"] in columns
+        feature["available"] = (feature["id"] in columns if feature["group"] == "team_stadium" else
+                                not feature["advanced"] or feature["id"] in columns)
         if not feature["available"]:
             feature["reason"] = "Not present in the processed dataset"
     return {"features": catalog, "groups": GROUPS}

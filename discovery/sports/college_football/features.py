@@ -110,6 +110,13 @@ def feature_specs() -> list[FeatureSpec]:
         specs.append(FeatureSpec(name, kind, label, label.lower()))
         specs.append(FeatureSpec(f"opp_{name}", kind, f"Opponent {label.lower()}", f"opponent {label.lower()}"))
 
+    # Advanced efficiency metrics are useful for analysis, but overwhelm fan-facing
+    # discoveries. Keep the definitions available for an explicit opt-in.
+    return specs
+
+
+def advanced_feature_specs() -> list[FeatureSpec]:
+    specs: list[FeatureSpec] = []
     # CFBD 2026 snapshot: school identity and home-stadium comparisons, not historical game venues.
     specs.extend([
         FeatureSpec('same_mascot', 'boolean', 'Same mascot'),
@@ -120,13 +127,7 @@ def feature_specs() -> list[FeatureSpec]:
         FeatureSpec('opponent_stadium_larger', 'boolean', 'Opponent home stadium is larger'),
     ])
 
-    # Advanced efficiency metrics are useful for analysis, but overwhelm fan-facing
-    # discoveries. Keep the definitions available for an explicit opt-in.
-    return specs
 
-
-def advanced_feature_specs() -> list[FeatureSpec]:
-    specs: list[FeatureSpec] = []
     for name, kind, label in _ADVANCED_TEAM_FEATURES:
         specs.append(FeatureSpec(name, kind, label, label.lower()))
         # Opponent copies already live on rows as opp_* from process.py
