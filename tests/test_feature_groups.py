@@ -7,12 +7,12 @@ from discovery.sports.college_football.feature_groups import GROUPS, feature_gro
 from webapp.app import MatchupRequest, _effective_config
 
 
-def test_groups_classify_existing_features_only():
+def test_groups_classify_existing_and_cfbd_features():
     assert feature_group("opp_wins") == "records"
     assert feature_group("rest_days") == "previous"
     assert feature_group("opp_EPAplay_off") == "advanced"
     assert feature_group("same_primary_color") == "team_stadium"
-    assert feature_group("stadium_capacity") is None
+    assert feature_group("stadium_capacity") == "team_stadium"
 
 
 def test_group_filter_does_not_leak_other_features():
