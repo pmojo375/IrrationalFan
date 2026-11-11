@@ -11,7 +11,7 @@ def test_groups_classify_existing_features_only():
     assert feature_group("opp_wins") == "records"
     assert feature_group("rest_days") == "previous"
     assert feature_group("opp_EPAplay_off") == "advanced"
-    assert feature_group("same_primary_color") is None
+    assert feature_group("same_primary_color") == "team_stadium"
     assert feature_group("stadium_capacity") is None
 
 
