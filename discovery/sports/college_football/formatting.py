@@ -110,7 +110,12 @@ def condition_phrase(cond: Condition) -> str:
         return f"Season type: {val}"
 
     # Fall back to the condition label / feature name for advanced EPA-style fields.
-    label = cond.label or feat.replace("_", " ")
+    label = feat.replace("_", " ")
+    if cond.label:
+        # Generated condition labels already include the operator and raw value.
+        # Extract only the feature name before formatting the threshold once.
+        marker = f" {op.value} "
+        label = cond.label.rsplit(marker, 1)[0] if marker in cond.label else cond.label
     rate_like = any(
         token in feat
         for token in ("rate", "success", "havoc", "explosive", "passrate", "rushrate", "win_pct")
@@ -145,7 +150,11 @@ def _numeric_phrase(
     else:
         try:
             fval = float(val)
-            shown = f"{fval:.3f}" if abs(fval) < 10 and not fval.is_integer() else f"{fval:g}"
+            if fval.is_integer():
+                shown = f"{int(fval):,}"
+            else:
+                # Keep precision readable without modifying the stored comparison value.
+                shown = f"{fval:,.3f}".rstrip("0").rstrip(".")
         except (TypeError, ValueError, AttributeError):
             shown = val
     if op == Operator.EQ:
