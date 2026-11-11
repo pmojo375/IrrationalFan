@@ -29,3 +29,25 @@ def test_d1_only_metadata_and_unknowns(tmp_path):
 def test_missing_snapshot_is_optional(tmp_path):
     games = pd.DataFrame({"team_id": [1], "opponent_id": [2]})
     assert enrich_metadata(games, tmp_path / "missing.json").equals(games)
+
+
+def test_upcoming_pair_uses_selected_opponent_not_previous_opponent(monkeypatch, tmp_path):
+    from discovery.sports.college_football import matchup
+    path = tmp_path / "teams.json"
+    path.write_text(json.dumps([
+        {"id": 1, "classification": "fbs", "mascot": "Spartans", "color": "#123456",
+         "location": {"capacity": 70000, "latitude": 42, "longitude": -85}},
+        {"id": 2, "classification": "fbs", "mascot": "Gophers", "color": "#654321",
+         "location": {"capacity": 50000, "latitude": 44, "longitude": -93}},
+        {"id": 3, "classification": "fbs", "mascot": "Spartans", "color": "#123456",
+         "location": {"capacity": 90000, "latitude": 41, "longitude": -84}},
+    ]))
+    monkeypatch.setattr(matchup, "load_metadata", lambda: load_metadata(path))
+    team = {"same_mascot": True, "same_primary_color": True, "opponent_stadium_larger": True}
+    opponent = {}
+    matchup._apply_current_pair_metadata(team, opponent, 1, 2)
+    assert team["same_mascot"] == False
+    assert team["same_primary_color"] == False
+    assert team["opponent_stadium_larger"] == False
+    assert opponent["opponent_stadium_larger"] == True
+    assert team["campus_distance_miles"] == opponent["campus_distance_miles"]
