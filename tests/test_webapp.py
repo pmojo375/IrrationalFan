@@ -1,5 +1,5 @@
 """API smoke tests using isolated schedule/engine fixtures."""
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -12,9 +12,10 @@ from discovery.engine.models import Discovery, Condition, Operator, MatchingGame
 
 def test_schedule_and_discovery(monkeypatch, tmp_path):
     schedule = tmp_path / "cfb_schedules_2026.parquet"
+    upcoming = datetime.now(timezone.utc) + timedelta(days=14)
     pd.DataFrame([{
         "game_id": 123, "season": 2026, "week": 10,
-        "start_date": "2026-11-07T17:00:00Z",
+        "start_date": upcoming.isoformat(),
         "home_id": 1, "away_id": 2,
         "home_team": "Michigan State", "away_team": "Minnesota",
         "status": "STATUS_SCHEDULED", "home_score": None, "away_score": None,

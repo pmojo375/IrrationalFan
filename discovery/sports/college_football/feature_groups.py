@@ -49,7 +49,7 @@ def feature_catalog():
     """Curated user-facing IDs; aliases and outcome fields are never selectable."""
     from discovery.sports.college_football.features import feature_specs, advanced_feature_specs
     unique = {f.name: f for f in [*feature_specs(), *advanced_feature_specs()]
-              if f.name != "month_name"}
+              if f.name != "month_name" and feature_group(f.name) is not None}
     return [{"id": f.name, "label": f.label, "group": feature_group(f.name),
              "perspective": "opponent" if f.name.startswith("opp_") else "team",
              "advanced": f.name not in {x.name for x in feature_specs()}}
