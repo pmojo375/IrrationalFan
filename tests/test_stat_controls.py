@@ -12,7 +12,9 @@ def test_stat_catalog_is_curated_and_separates_perspectives():
     catalog = TestClient(app).get('/api/features').json()['features']
     ids = {f['id'] for f in catalog}
     assert {'wins', 'opp_wins', 'rest_days', 'opp_rest_days'} <= ids
-    assert not {'won', 'team_score', 'month_name', 'stadium_capacity'} & ids
+    assert not {'won', 'team_score', 'month_name'} & ids
+    assert {'same_mascot', 'same_primary_color', 'stadium_capacity', 'campus_distance_miles'} <= ids
+    assert all(f['group'] == 'team_stadium' and f['advanced'] for f in catalog if f['id'] in {'same_mascot', 'stadium_capacity'})
     assert len(ids) == len(catalog)
 
 
@@ -73,3 +75,12 @@ def test_team_and_opponent_selections_are_remapped_in_opponent_history():
     assert own and opp
     assert all({c.feature for c in d.conditions} == {'wins'} for d in own)
     assert all({c.feature for c in d.conditions} == {'opp_wins'} for d in opp)
+
+
+def test_cfbd_stats_require_deployed_dataset(monkeypatch):
+    import webapp.app as web_module
+    monkeypatch.setattr(web_module, "selectable_features", lambda: {"features": [
+        {**f, "available": f["group"] != "team_stadium"}
+        for f in web_module.feature_catalog()]})
+    with pytest.raises(ValueError, match="not present"):
+        _effective_config(MatchupRequest(game_id="1", allowed_stats=["same_mascot"]))
