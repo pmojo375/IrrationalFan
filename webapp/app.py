@@ -152,7 +152,7 @@ def _effective_config(request: MatchupRequest) -> EngineConfig:
     selected = set(allowed if allowed is not None else catalog) - excluded
     if request.feature_groups is not None:
         selected = {n for n in selected if catalog[n]["group"] in request.feature_groups}
-    unavailable = {n for n in selected if not deployed[n]["available"]}
+    unavailable = {n for n in selected if deployed[n]["group"] == "team_stadium" and not deployed[n]["available"]}
     if required & unavailable:
         raise ValueError("Required stats are not present in the deployed dataset: " + ", ".join(sorted(required & unavailable)))
     if allowed is not None and unavailable:
@@ -176,7 +176,8 @@ def selectable_features():
         columns = set()
     catalog = feature_catalog()
     for feature in catalog:
-        feature["available"] = feature["group"] != "team_stadium" or feature["id"] in columns
+        feature["available"] = (feature["id"] in columns if feature["group"] == "team_stadium" else
+                                not feature["advanced"] or feature["id"] in columns)
         if not feature["available"]:
             feature["reason"] = "Not present in the processed dataset"
     return {"features": catalog, "groups": GROUPS}
