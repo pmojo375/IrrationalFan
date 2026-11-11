@@ -15,6 +15,7 @@ from discovery.engine.validation import apply_conditions, build_matching_games, 
 from discovery.sports.college_football.dates import before_as_of_mask, parse_as_of, parse_game_dates
 from discovery.sports.college_football.schedule import resolve_scheduled_game, scheduled_context
 from discovery.sports.college_football.context import upcoming_context
+from discovery.sports.college_football.cfbd_metadata import load_metadata, _distance
 from discovery.sports.college_football.features import (
     LEAKAGE_COLUMNS,
     MONTH_NAMES,
@@ -217,6 +218,29 @@ def _team_state_after_latest(
     return state
 
 
+
+def _apply_current_pair_metadata(team_feats, opponent_feats, team_id, opponent_id):
+    """Compute pair-dependent fields using the actual upcoming opponents."""
+    meta = load_metadata()
+    if meta.empty:
+        return
+    indexed = meta.set_index("team_id")
+    if team_id not in indexed.index or opponent_id not in indexed.index:
+        return
+    a, b = indexed.loc[team_id], indexed.loc[opponent_id]
+    for target, own, other in ((team_feats, a, b), (opponent_feats, b, a)):
+        for key in ("mascot", "primary_color", "stadium_capacity"):
+            target[key] = own[key]
+            target["opp_" + key] = other[key]
+        known_mascots = pd.notna(own["mascot"]) and pd.notna(other["mascot"])
+        known_colors = pd.notna(own["primary_color"]) and pd.notna(other["primary_color"])
+        known_capacity = pd.notna(own["stadium_capacity"]) and pd.notna(other["stadium_capacity"])
+        target["same_mascot"] = str(own["mascot"]).casefold() == str(other["mascot"]).casefold() if known_mascots else pd.NA
+        target["same_primary_color"] = own["primary_color"] == other["primary_color"] if known_colors else pd.NA
+        target["opponent_stadium_larger"] = other["stadium_capacity"] > own["stadium_capacity"] if known_capacity else pd.NA
+        target["campus_distance_miles"] = _distance(own["stadium_latitude"], own["stadium_longitude"],
+                                                     other["stadium_latitude"], other["stadium_longitude"])
+
 def build_matchup_features(
     df: pd.DataFrame,
     *,
@@ -353,6 +377,8 @@ def build_matchup_features(
         # Neutral-site designation never implies a home-field advantage.
         if pd.notna(metadata.get("neutral_site")) and bool(metadata["neutral_site"]):
             team_feats["is_home"] = opponent_feats["is_home"] = False
+
+    _apply_current_pair_metadata(team_feats, opponent_feats, team_id, opponent_id)
 
     # Apply explicit overrides to the selected team's feature vector (and mirrored keys)
     for key, value in overrides.items():

@@ -110,6 +110,16 @@ def feature_specs() -> list[FeatureSpec]:
         specs.append(FeatureSpec(name, kind, label, label.lower()))
         specs.append(FeatureSpec(f"opp_{name}", kind, f"Opponent {label.lower()}", f"opponent {label.lower()}"))
 
+    # CFBD 2026 snapshot: school identity and home-stadium comparisons, not historical game venues.
+    specs.extend([
+        FeatureSpec('same_mascot', 'boolean', 'Same mascot'),
+        FeatureSpec('same_primary_color', 'boolean', 'Same primary school color'),
+        FeatureSpec('campus_distance_miles', 'numeric', 'Miles between home stadiums'),
+        FeatureSpec('stadium_capacity', 'numeric', 'School home stadium capacity'),
+        FeatureSpec('opp_stadium_capacity', 'numeric', 'Opponent home stadium capacity'),
+        FeatureSpec('opponent_stadium_larger', 'boolean', 'Opponent home stadium is larger'),
+    ])
+
     # Advanced efficiency metrics are useful for analysis, but overwhelm fan-facing
     # discoveries. Keep the definitions available for an explicit opt-in.
     return specs
