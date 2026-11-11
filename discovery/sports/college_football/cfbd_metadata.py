@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-METADATA_PATH = Path(__file__).resolve().parents[2] / "data" / "cfbd_teams_2026.json"
+METADATA_PATH = Path(__file__).resolve().parents[3] / "data" / "cfbd_teams_2026.json"
 D1 = {"fbs", "fcs"}
 FIELDS = {
     "mascot": "mascot", "color": "primary_color", "alternateColor": "alternate_color",
